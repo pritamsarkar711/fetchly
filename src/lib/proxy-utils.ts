@@ -32,8 +32,6 @@ export function validateProxyUrl(input: string | null): string | null {
     if (!['http:', 'https:'].includes(parsed.protocol)) return null;
     if (!parsed.hostname.includes('.')) return null;
     if (isInternalUrl(normalized)) return null;
-    // Allow only video-like URLs or known CDNs to reduce abuse,
-    // but also allow generic https for broader support
     return normalized;
   } catch {
     return null;
@@ -42,13 +40,9 @@ export function validateProxyUrl(input: string | null): string | null {
 
 export function sanitizeFilename(input: string | null, fallback = 'video.mp4'): string {
   let name = (input || fallback).trim();
-  // Remove path traversal
   name = name.split('/').pop()?.split('\\').pop() || fallback;
-  // Allow only safe chars
   name = name.replace(/[^a-zA-Z0-9._\-\s]/g, '_');
-  // Ensure extension
   if (!name.includes('.')) name += '.mp4';
-  // Limit length
   if (name.length > 150) {
     const ext = name.split('.').pop();
     name = name.slice(0, 100) + '.' + ext;
@@ -66,11 +60,74 @@ export const COMMON_HEADERS = {
   'Cache-Control': 'no-cache',
 };
 
+// Determine appropriate referer/origin based on upstream URL
+export function getHeadersForUrl(upstreamUrl: string): Record<string, string> {
+  const lower = upstreamUrl.toLowerCase();
+  const base = {
+    'User-Agent': COMMON_HEADERS['User-Agent'],
+    'Accept': '*/*',
+    'Accept-Language': 'en-US,en;q=0.5',
+    'Connection': 'keep-alive',
+    'Cache-Control': 'no-cache',
+  } as Record<string, string>;
+
+  // LuluStream / LuluVdo / tnmr CDN
+  if (
+    lower.includes('luluvdo') ||
+    lower.includes('lulustream') ||
+    lower.includes('luluvid') ||
+    lower.includes('luluvid') ||
+    lower.includes('tnmr.org') ||
+    lower.includes('cdn-tnmr') ||
+    lower.includes('732eg54de642sa') ||
+    lower.includes('d00ds.site') ||
+    lower.includes('streamhihi') ||
+    lower.includes('lulu.st') ||
+    lower.includes('cdn1.site')
+  ) {
+    return {
+      ...base,
+      'Referer': 'https://luluvdo.com/',
+      'Origin': 'https://luluvdo.com',
+    };
+  }
+
+  // MixDrop
+  if (
+    lower.includes('mxcontent') ||
+    lower.includes('mxdcontent') ||
+    lower.includes('mixdrop') ||
+    lower.includes('delivery')
+  ) {
+    return {
+      ...base,
+      'Referer': 'https://mixdrop.co/',
+      'Origin': 'https://mixdrop.co',
+    };
+  }
+
+  // Generic fallback
+  try {
+    const u = new URL(upstreamUrl);
+    return {
+      ...base,
+      'Referer': `${u.protocol}//${u.host}/`,
+      'Origin': `${u.protocol}//${u.host}`,
+    };
+  } catch {
+    return {
+      ...base,
+      'Referer': 'https://mixdrop.co/',
+      'Origin': 'https://mixdrop.co',
+    };
+  }
+}
+
 export function buildCorsHeaders(): Headers {
   const h = new Headers();
   h.set('Access-Control-Allow-Origin', '*');
   h.set('Access-Control-Allow-Methods', 'GET, HEAD, OPTIONS');
-  h.set('Access-Control-Allow-Headers', 'Range, Content-Type, Origin, Referer, User-Agent');
+  h.set('Access-Control-Allow-Headers', 'Range, Content-Type, Origin, Referer, User-Agent, Accept-Language');
   h.set('Access-Control-Expose-Headers', 'Content-Length, Content-Range, Accept-Ranges, Content-Type, Content-Disposition');
   return h;
 }

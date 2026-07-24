@@ -293,7 +293,9 @@ function ResultsContent() {
                     </span>
                   )}
                   <span>{result.data.sources.length} source{result.data.sources.length !== 1 ? 's' : ''}</span>
-                  <span className="bg-gray-100 px-1.5 py-0.5 rounded text-[10px]">MixDrop</span>
+                  <span className="bg-gray-100 px-1.5 py-0.5 rounded text-[10px]">
+                    {result.data.originalUrl.includes('lulu') ? 'LuluStream' : 'MixDrop'}
+                  </span>
                   <span className="bg-green-50 text-green-700 px-1.5 py-0.5 rounded text-[10px] border border-green-100">Direct Links Fixed</span>
                 </div>
               </div>
@@ -377,7 +379,7 @@ function ResultsContent() {
               <h2 className="text-sm font-medium text-gray-700 mb-2 sm:mb-3">
                 Direct Video Sources
                 {result.data.sources.length > 0 && (
-                  <span className="text-gray-400 font-normal ml-1">({result.data.sources.length}) · No MixDrop redirect</span>
+                  <span className="text-gray-400 font-normal ml-1">({result.data.sources.length}) · No redirect</span>
                 )}
               </h2>
               {result.data.sources.length === 0 ? (

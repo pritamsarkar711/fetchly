@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { validateProxyUrl, COMMON_HEADERS, buildCorsHeaders } from '@/lib/proxy-utils';
+import { validateProxyUrl, getHeadersForUrl, buildCorsHeaders } from '@/lib/proxy-utils';
 
 export const dynamic = 'force-dynamic';
 export const runtime = 'nodejs';
@@ -20,10 +20,9 @@ async function handleProxy(request: NextRequest) {
   const rangeHeader = request.headers.get('range');
 
   try {
-    const upstreamHeaders: Record<string, string> = { ...COMMON_HEADERS };
+    const upstreamHeaders: Record<string, string> = { ...getHeadersForUrl(validated) };
     if (rangeHeader) upstreamHeaders['Range'] = rangeHeader;
 
-    // For M3U8 we don't forward range
     if (validated.includes('.m3u8')) {
       delete upstreamHeaders['Range'];
     }
@@ -32,12 +31,10 @@ async function handleProxy(request: NextRequest) {
       method: 'GET',
       headers: upstreamHeaders,
       redirect: 'follow',
-      // @ts-ignore - Next.js fetch supports signal timeout via AbortSignal
       signal: AbortSignal.timeout(30000),
     });
 
     if (!upstream.ok && upstream.status !== 206) {
-      // If not ok, return error
       return NextResponse.json(
         { error: `Upstream responded ${upstream.status}` },
         { status: upstream.status, headers: buildCorsHeaders() }
@@ -47,7 +44,6 @@ async function handleProxy(request: NextRequest) {
     const contentType = upstream.headers.get('content-type');
     const isHls = isM3U8(validated, contentType);
 
-    // If HLS manifest, rewrite segment URLs to go through our proxy
     if (isHls) {
       const text = await upstream.text();
       const baseUrl = validated;
@@ -65,10 +61,7 @@ async function handleProxy(request: NextRequest) {
       });
     }
 
-    // For regular video, stream body directly
     const headers = buildCorsHeaders();
-
-    // Copy relevant headers
     const ct = contentType || 'video/mp4';
     headers.set('Content-Type', ct);
 
@@ -84,12 +77,10 @@ async function handleProxy(request: NextRequest) {
     headers.set('Content-Disposition', 'inline');
     headers.set('Cache-Control', 'public, max-age=3600');
 
-    // If upstream body is null (should not), return error
     if (!upstream.body) {
       return NextResponse.json({ error: 'Empty upstream body' }, { status: 502, headers });
     }
 
-    // Return streamed response; preserve status (200 or 206)
     return new NextResponse(upstream.body, {
       status: upstream.status,
       headers,
@@ -109,17 +100,12 @@ function rewriteM3U8(content: string, baseUrl: string, origin: string): string {
   const rewritten = lines.map(line => {
     const trimmed = line.trim();
     if (!trimmed) return line;
-    if (trimmed.startsWith('#')) return line; // tag
-    // It's a segment URL or nested playlist
-    // If it's already absolute http, proxy it
-    // If relative, resolve against baseUrl
+    if (trimmed.startsWith('#')) return line;
     try {
       let absolute = trimmed;
       if (!trimmed.startsWith('http://') && !trimmed.startsWith('https://')) {
-        // Resolve relative
         absolute = new URL(trimmed, baseUrl).toString();
       }
-      // Only proxy video-related URLs
       const proxyUrl = `${origin}/api/stream?url=${encodeURIComponent(absolute)}`;
       return proxyUrl;
     } catch {
@@ -141,7 +127,6 @@ export async function OPTIONS() {
 }
 
 export async function HEAD(request: NextRequest) {
-  // Support HEAD by proxying HEAD
   const urlParam = request.nextUrl.searchParams.get('url');
   const validated = validateProxyUrl(urlParam);
   if (!validated) {
@@ -150,7 +135,7 @@ export async function HEAD(request: NextRequest) {
   try {
     const upstream = await fetch(validated, {
       method: 'HEAD',
-      headers: COMMON_HEADERS,
+      headers: getHeadersForUrl(validated),
       redirect: 'follow',
       signal: AbortSignal.timeout(15000),
     });

@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { validateProxyUrl, COMMON_HEADERS, buildCorsHeaders, sanitizeFilename } from '@/lib/proxy-utils';
+import { validateProxyUrl, getHeadersForUrl, buildCorsHeaders, sanitizeFilename } from '@/lib/proxy-utils';
 
 export const dynamic = 'force-dynamic';
 export const runtime = 'nodejs';
@@ -18,7 +18,7 @@ export async function GET(request: NextRequest) {
   const rangeHeader = request.headers.get('range');
 
   try {
-    const upstreamHeaders: Record<string, string> = { ...COMMON_HEADERS };
+    const upstreamHeaders: Record<string, string> = { ...getHeadersForUrl(validated) };
     if (rangeHeader) upstreamHeaders['Range'] = rangeHeader;
 
     const upstream = await fetch(validated, {
@@ -53,7 +53,6 @@ export async function GET(request: NextRequest) {
     const acceptRanges = upstream.headers.get('accept-ranges');
     headers.set('Accept-Ranges', acceptRanges || 'bytes');
 
-    // Force download
     headers.set('Content-Disposition', `attachment; filename="${filename}"; filename*=UTF-8''${encodeURIComponent(filename)}`);
     headers.set('Cache-Control', 'private, max-age=0, must-revalidate');
 
@@ -87,7 +86,7 @@ export async function HEAD(request: NextRequest) {
   try {
     const upstream = await fetch(validated, {
       method: 'HEAD',
-      headers: COMMON_HEADERS,
+      headers: getHeadersForUrl(validated),
       redirect: 'follow',
       signal: AbortSignal.timeout(15000),
     });

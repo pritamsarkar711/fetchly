@@ -147,6 +147,8 @@ export default function Home() {
           <p className="text-xs text-gray-500 mb-2">Supported sites</p>
           <div className="flex flex-wrap items-center justify-center gap-2 sm:gap-3">
             <span className="text-xs text-gray-600 bg-gray-50 px-2.5 sm:px-3 py-1 rounded-full border border-gray-100">MixDrop</span>
+            <span className="text-xs text-gray-600 bg-purple-50 px-2.5 sm:px-3 py-1 rounded-full border border-purple-100">LuluStream</span>
+            <span className="text-xs text-gray-600 bg-gray-50 px-2.5 sm:px-3 py-1 rounded-full border border-gray-100">LuluVdo</span>
             <span className="text-xs text-gray-400 bg-gray-50 px-2.5 sm:px-3 py-1 rounded-full border border-gray-100">Direct URLs</span>
           </div>
         </div>

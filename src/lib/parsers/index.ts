@@ -1,5 +1,6 @@
 import { VideoInfo, FetchResult } from '../types';
 import { parseMixDrop, isMixDropUrl } from './mixdrop';
+import { parseLuluStream, isLuluStreamUrl } from './lulustream';
 
 /**
  * Detect which site the URL belongs to and return the appropriate parser
@@ -29,6 +30,11 @@ export async function parseUrl(url: string): Promise<FetchResult> {
     // Try MixDrop parser
     if (isMixDropUrl(normalizedUrl)) {
       data = await parseMixDrop(normalizedUrl);
+    }
+
+    // Try LuluStream parser
+    if (!data && isLuluStreamUrl(normalizedUrl)) {
+      data = await parseLuluStream(normalizedUrl);
     }
 
     // If no parser matched, try generic fetch
@@ -112,6 +118,30 @@ async function genericFetch(url: string): Promise<VideoInfo | null> {
         originalUrl: url,
         downloadUrl: url,
       };
+    }
+
+    // If it's HLS manifest directly
+    if (contentType.includes('mpegurl') || url.includes('.m3u8')) {
+      const text = await response.text();
+      // If it looks like m3u8 playlist, treat as valid source
+      if (text.includes('#EXTM3U')) {
+        const fileName = url.split('/').pop()?.split('?')[0] || 'video.m3u8';
+        return {
+          title: fileName,
+          fileName: fileName.replace('.m3u8', '.mp4'),
+          fileSize: 'Unknown',
+          fileSizeBytes: 0,
+          thumbnail: '',
+          sources: [{
+            url,
+            quality: 'Auto',
+            format: 'HLS (m3u8)',
+            isM3u8: true,
+          }],
+          originalUrl: url,
+          downloadUrl: url,
+        };
+      }
     }
 
     return null;
