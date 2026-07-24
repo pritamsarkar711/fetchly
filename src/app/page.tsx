@@ -149,6 +149,7 @@ export default function Home() {
             <span className="text-xs text-gray-600 bg-gray-50 px-2.5 sm:px-3 py-1 rounded-full border border-gray-100">MixDrop</span>
             <span className="text-xs text-gray-600 bg-purple-50 px-2.5 sm:px-3 py-1 rounded-full border border-purple-100">LuluStream</span>
             <span className="text-xs text-gray-600 bg-gray-50 px-2.5 sm:px-3 py-1 rounded-full border border-gray-100">LuluVdo</span>
+            <span className="text-xs text-gray-600 bg-blue-50 px-2.5 sm:px-3 py-1 rounded-full border border-blue-100">Vidara</span>
             <span className="text-xs text-gray-400 bg-gray-50 px-2.5 sm:px-3 py-1 rounded-full border border-gray-100">Direct URLs</span>
           </div>
         </div>

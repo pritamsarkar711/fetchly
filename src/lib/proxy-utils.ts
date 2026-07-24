@@ -8,7 +8,7 @@ export const BLOCKED_HOSTS = [
   '172.20.', '172.21.', '172.22.', '172.23.', '172.24.',
   '172.25.', '172.26.', '172.27.', '172.28.', '172.29.',
   '172.30.', '172.31.', '192.168.',
-  '169.254.', // link-local
+  '169.254.',
 ];
 
 export function isInternalUrl(url: string): boolean {
@@ -18,7 +18,7 @@ export function isInternalUrl(url: string): boolean {
       hostname === blocked || hostname.startsWith(blocked)
     );
   } catch {
-    return true; // block invalid
+    return true;
   }
 }
 
@@ -60,7 +60,6 @@ export const COMMON_HEADERS = {
   'Cache-Control': 'no-cache',
 };
 
-// Determine appropriate referer/origin based on upstream URL
 export function getHeadersForUrl(upstreamUrl: string): Record<string, string> {
   const lower = upstreamUrl.toLowerCase();
   const base = {
@@ -76,7 +75,6 @@ export function getHeadersForUrl(upstreamUrl: string): Record<string, string> {
     lower.includes('luluvdo') ||
     lower.includes('lulustream') ||
     lower.includes('luluvid') ||
-    lower.includes('luluvid') ||
     lower.includes('tnmr.org') ||
     lower.includes('cdn-tnmr') ||
     lower.includes('732eg54de642sa') ||
@@ -89,6 +87,22 @@ export function getHeadersForUrl(upstreamUrl: string): Record<string, string> {
       ...base,
       'Referer': 'https://luluvdo.com/',
       'Origin': 'https://luluvdo.com',
+    };
+  }
+
+  // Vidara
+  if (
+    lower.includes('vidara.to') ||
+    lower.includes('vidara.so') ||
+    lower.includes('vidara.is') ||
+    lower.includes('vidara.me') ||
+    lower.includes('ey43.com') ||
+    lower.includes('vidar')
+  ) {
+    return {
+      ...base,
+      'Referer': 'https://vidara.to/',
+      'Origin': 'https://vidara.to',
     };
   }
 
@@ -106,7 +120,6 @@ export function getHeadersForUrl(upstreamUrl: string): Record<string, string> {
     };
   }
 
-  // Generic fallback
   try {
     const u = new URL(upstreamUrl);
     return {
