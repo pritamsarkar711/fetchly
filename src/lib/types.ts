@@ -21,9 +21,3 @@ export interface FetchResult {
   data?: VideoInfo;
   error?: string;
 }
-
-export interface ParsedUrl {
-  site: string;
-  fileId: string;
-  originalUrl: string;
-}

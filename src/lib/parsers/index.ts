@@ -1,15 +1,12 @@
-import { VideoInfo, FetchResult, ParsedUrl } from '../types';
+import { VideoInfo, FetchResult } from '../types';
 import { parseMixDrop, isMixDropUrl } from './mixdrop';
 
 /**
  * Detect which site the URL belongs to and return the appropriate parser
  */
 export async function parseUrl(url: string): Promise<FetchResult> {
-  if (!url || typeof url !== 'string') {
-    return {
-      success: false,
-      error: 'Please provide a valid URL',
-    };
+  if (!url || typeof url !== 'string' || !url.trim()) {
+    return { success: false, error: 'Please provide a valid URL' };
   }
 
   let normalizedUrl = url.trim();
@@ -23,10 +20,7 @@ export async function parseUrl(url: string): Promise<FetchResult> {
   try {
     new URL(normalizedUrl);
   } catch {
-    return {
-      success: false,
-      error: 'Invalid URL format. Please enter a valid URL.',
-    };
+    return { success: false, error: 'Invalid URL format. Please enter a valid URL.' };
   }
 
   try {
@@ -37,23 +31,24 @@ export async function parseUrl(url: string): Promise<FetchResult> {
       data = await parseMixDrop(normalizedUrl);
     }
 
-    // If no parser matched or no data found, try generic fetch
+    // If no parser matched, try generic fetch
     if (!data) {
       data = await genericFetch(normalizedUrl);
     }
 
-    if (!data) {
+    if (!data || !data.sources || data.sources.length === 0) {
       return {
         success: false,
         error: 'Could not find any video sources at this URL. The site may not be supported or the file may not exist.',
       };
     }
 
-    // Clean up - remove duplicate sources
+    // Deduplicate sources by URL
     const seenUrls = new Set<string>();
     data.sources = data.sources.filter(source => {
-      if (seenUrls.has(source.url)) return false;
-      seenUrls.add(source.url);
+      const key = source.url.toLowerCase().trim();
+      if (seenUrls.has(key)) return false;
+      seenUrls.add(key);
       return true;
     });
 
@@ -64,10 +59,7 @@ export async function parseUrl(url: string): Promise<FetchResult> {
       };
     }
 
-    return {
-      success: true,
-      data,
-    };
+    return { success: true, data };
   } catch (error: any) {
     console.error('Parser error:', error);
     return {
@@ -82,11 +74,18 @@ export async function parseUrl(url: string): Promise<FetchResult> {
  */
 async function genericFetch(url: string): Promise<VideoInfo | null> {
   try {
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), 10000);
+
     const response = await fetch(url, {
+      signal: controller.signal,
       headers: {
         'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
       },
+      redirect: 'follow',
     });
+
+    clearTimeout(timeout);
 
     if (!response.ok) return null;
 
@@ -96,14 +95,13 @@ async function genericFetch(url: string): Promise<VideoInfo | null> {
     if (contentType.startsWith('video/')) {
       const fileName = url.split('/').pop()?.split('?')[0] || 'video.mp4';
       const isM3u8 = url.includes('.m3u8');
+      const contentLength = response.headers.get('content-length');
 
       return {
         title: fileName,
         fileName,
-        fileSize: response.headers.get('content-length')
-          ? formatBytes(parseInt(response.headers.get('content-length')!))
-          : 'Unknown',
-        fileSizeBytes: parseInt(response.headers.get('content-length') || '0'),
+        fileSize: contentLength ? formatBytes(parseInt(contentLength)) : 'Unknown',
+        fileSizeBytes: parseInt(contentLength || '0'),
         thumbnail: '',
         sources: [{
           url,
