@@ -1,0 +1,10 @@
+@import "tailwindcss";
+
+@theme inline {
+  --font-sans: "Work Sans", ui-sans-serif, system-ui, sans-serif;
+  --font-mono: "Work Sans", ui-monospace, SFMono-Regular, monospace;
+}
+
+body {
+  font-family: "Work Sans", Arial, Helvetica, sans-serif;
+}
