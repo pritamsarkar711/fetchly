@@ -4,7 +4,7 @@ import { VideoInfo, VideoSource } from '../types';
 import { fetchPublicUrl, readResponseText } from '../proxy-utils';
 import { detectPacked, unpackAllLayers } from './unpacker';
 
-const FETCH_TIMEOUT = 12_000;
+const FETCH_TIMEOUT = 22_000;
 
 async function fetchWithFallback(url: string, referer?: string): Promise<Response> {
   const controller = new AbortController();
@@ -12,6 +12,33 @@ async function fetchWithFallback(url: string, referer?: string): Promise<Respons
 
   try {
     const ref = referer || url;
+    
+    // Attempt FlareSolverr bypass if configured
+    if (process.env.FLARESOLVERR_URL) {
+      try {
+        const fsResponse = await fetch(process.env.FLARESOLVERR_URL + '/v1', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            cmd: 'request.get',
+            url: url,
+            maxTimeout: 10000
+          })
+        });
+        if (fsResponse.ok) {
+          const fsData = await fsResponse.json();
+          if (fsData.solution?.response) {
+            return new Response(fsData.solution.response, {
+              status: 200,
+              headers: { 'content-type': 'text/html' }
+            });
+          }
+        }
+      } catch (err) {
+        console.error('FlareSolverr error:', err);
+      }
+    }
+
     const response = await fetchPublicUrl(url, {
       signal: controller.signal,
       headers: {
@@ -286,14 +313,14 @@ function extractVideoSourcesFromHtml($: cheerio.CheerioAPI, html: string, baseUr
   }
 
   // 5. Iframe embedding – collect iframe src that might be video host
-  // We won't fetch them here to avoid recursion, but we add them as potential sources
-  // The main parser will try to fetch iframe src separately if needed
   $('iframe').each((_: number, el: any) => {
     const src = $(el).attr('src');
-    if (src && src.startsWith('http') && (src.includes('/e/') || src.includes('/v/') || src.includes('/watch/') || src.includes('/embed/') || src.includes('streamtape') || src.includes('mixdrop') || src.includes('lulu') || src.includes('vidara') || src.includes('firestream') || src.includes('playmate') || src.includes('get_video') || src.includes('.mp4') || src.includes('.m3u8'))) {
-      // Don't add iframe page itself as video unless it's direct video
-      if (src.includes('.mp4') || src.includes('.m3u8') || src.includes('get_video')) {
-        addSource(src);
+    if (src && src.startsWith('http') && !src.includes('google') && !src.includes('facebook') && !src.includes('twitter') && !src.includes('recaptcha')) {
+      const normalized = normalizeUrl(src, baseUrl);
+      
+      // If it looks like a direct video link, add it as a source
+      if (normalized.includes('.mp4') || normalized.includes('.m3u8') || normalized.includes('get_video')) {
+        addSource(normalized);
       }
     }
   });
@@ -337,7 +364,7 @@ async function tryIframeExtraction($: cheerio.CheerioAPI, baseUrl: string, depth
   return iframeSources;
 }
 
-export async function parseGeneric(url: string): Promise<VideoInfo | null> {
+export async function parseGeneric(url: string, parentReferer?: string): Promise<VideoInfo | null> {
   // Validate URL
   try {
     new URL(url);
@@ -348,7 +375,7 @@ export async function parseGeneric(url: string): Promise<VideoInfo | null> {
   const fileId = url.split('/').pop()?.split('?')[0] || 'video';
 
   try {
-    const response = await fetchWithFallback(url);
+    const response = await fetchWithFallback(url, parentReferer);
     const contentType = (response.headers.get('content-type') || '').toLowerCase();
     const isHlsResponse = contentType.includes('mpegurl') || contentType.includes('vnd.apple.mpegurl');
     const isVideoResponse = contentType.startsWith('video/');
@@ -430,7 +457,33 @@ export async function parseGeneric(url: string): Promise<VideoInfo | null> {
       return l.includes('.mp4') || l.includes('.m3u8') || l.includes('get_video') || l.includes('.webm') || l.includes('.mov') || l.includes('master.m3u8') || l.includes('.urlset') || l.includes('/videos/') || l.includes('hls');
     });
 
-    if (videoSources.length === 0) return null;
+    const iframeUrls: string[] = [];
+    $('iframe').each((_: number, el: any) => {
+      const src = $(el).attr('src');
+      if (src) {
+        const normalized = normalizeUrl(src, url);
+        if (normalized.startsWith('http') && !normalized.includes('google') && !normalized.includes('facebook') && !normalized.includes('twitter') && !normalized.includes('recaptcha')) {
+          iframeUrls.push(normalized);
+        }
+      }
+    });
+
+    if (videoSources.length === 0) {
+      if (iframeUrls.length > 0) {
+        return {
+          title: fileInfo.title,
+          fileName: fileInfo.fileName,
+          fileSize: fileInfo.fileSize || 'Unknown',
+          fileSizeBytes: fileInfo.fileSizeBytes,
+          thumbnail: fileInfo.thumbnail,
+          sources: [],
+          originalUrl: url,
+          downloadUrl: null,
+          iframeUrls,
+        };
+      }
+      return null;
+    }
 
     // Sort: mp4 first for download, but keep m3u8 master first for HLS
     videoSources.sort((a, b) => {
@@ -453,7 +506,8 @@ export async function parseGeneric(url: string): Promise<VideoInfo | null> {
       thumbnail: fileInfo.thumbnail,
       sources: videoSources,
       originalUrl: url,
-      downloadUrl: primary.url,
+      downloadUrl: primary?.url || null,
+      iframeUrls,
     };
   } catch (e) {
     console.error('Generic parser error for', url, e);

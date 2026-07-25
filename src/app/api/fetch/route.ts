@@ -3,6 +3,8 @@ import { parseUrl } from '@/lib/parsers';
 import { validatePublicUrl } from '@/lib/proxy-utils';
 import { takeRateLimit } from '@/lib/rate-limit';
 
+export const maxDuration = 60;
+
 async function validateUrl(input: string | null): Promise<string | null> {
   if (!input || typeof input !== 'string') return null;
   const trimmed = input.trim();

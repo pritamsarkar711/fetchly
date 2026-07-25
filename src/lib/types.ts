@@ -7,6 +7,7 @@ export interface VideoInfo {
   sources: VideoSource[];
   originalUrl: string;
   downloadUrl: string | null;
+  iframeUrls?: string[];
 }
 
 export interface VideoSource {
