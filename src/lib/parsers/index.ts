@@ -2,6 +2,7 @@ import { VideoInfo, FetchResult } from '../types';
 import { parseMixDrop, isMixDropUrl } from './mixdrop';
 import { parseLuluStream, isLuluStreamUrl } from './lulustream';
 import { parseVidara, isVidaraUrl } from './vidara';
+import { parseFireStream, isFireStreamUrl } from './firestream';
 
 /**
  * Detect which site the URL belongs to and return the appropriate parser
@@ -13,12 +14,10 @@ export async function parseUrl(url: string): Promise<FetchResult> {
 
   let normalizedUrl = url.trim();
 
-  // Add https:// if missing
   if (!normalizedUrl.startsWith('http://') && !normalizedUrl.startsWith('https://')) {
     normalizedUrl = 'https://' + normalizedUrl;
   }
 
-  // Validate URL
   try {
     new URL(normalizedUrl);
   } catch {
@@ -28,22 +27,22 @@ export async function parseUrl(url: string): Promise<FetchResult> {
   try {
     let data: VideoInfo | null = null;
 
-    // Try MixDrop parser
     if (isMixDropUrl(normalizedUrl)) {
       data = await parseMixDrop(normalizedUrl);
     }
 
-    // Try LuluStream parser
     if (!data && isLuluStreamUrl(normalizedUrl)) {
       data = await parseLuluStream(normalizedUrl);
     }
 
-    // Try Vidara parser
     if (!data && isVidaraUrl(normalizedUrl)) {
       data = await parseVidara(normalizedUrl);
     }
 
-    // If no parser matched, try generic fetch
+    if (!data && isFireStreamUrl(normalizedUrl)) {
+      data = await parseFireStream(normalizedUrl);
+    }
+
     if (!data) {
       data = await genericFetch(normalizedUrl);
     }
@@ -55,7 +54,6 @@ export async function parseUrl(url: string): Promise<FetchResult> {
       };
     }
 
-    // Deduplicate sources by URL
     const seenUrls = new Set<string>();
     data.sources = data.sources.filter(source => {
       const key = source.url.toLowerCase().trim();
@@ -81,9 +79,6 @@ export async function parseUrl(url: string): Promise<FetchResult> {
   }
 }
 
-/**
- * Try to extract video info from any page generically
- */
 async function genericFetch(url: string): Promise<VideoInfo | null> {
   try {
     const controller = new AbortController();
@@ -103,7 +98,6 @@ async function genericFetch(url: string): Promise<VideoInfo | null> {
 
     const contentType = response.headers.get('content-type') || '';
 
-    // If it's a direct video file
     if (contentType.startsWith('video/')) {
       const fileName = url.split('/').pop()?.split('?')[0] || 'video.mp4';
       const isM3u8 = url.includes('.m3u8');
@@ -126,7 +120,6 @@ async function genericFetch(url: string): Promise<VideoInfo | null> {
       };
     }
 
-    // If it's HLS manifest directly
     if (contentType.includes('mpegurl') || url.includes('.m3u8')) {
       const text = await response.text();
       if (text.includes('#EXTM3U')) {
