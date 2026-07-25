@@ -76,6 +76,11 @@ export async function parseWithYtDlp(url: string, referer?: string): Promise<Vid
       '--no-warnings',
       '--ignore-errors',
       '--geo-bypass',
+      '--impersonate', 'chrome', // Crucial for WAF/Cloudflare bypass
+      '--add-header', 'Sec-Fetch-Mode: navigate',
+      '--add-header', 'Sec-Fetch-Site: none',
+      '--add-header', 'Sec-Fetch-Dest: document',
+      '--user-agent', 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36',
       '--format', 'best[ext=mp4]/best',
     ];
 

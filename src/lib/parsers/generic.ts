@@ -296,6 +296,18 @@ function extractVideoSourcesFromHtml($: cheerio.CheerioAPI, html: string, baseUr
       }
     }
 
+    // Try decoding Base64 strings that look long enough to be URLs
+    const b64Regex = /(?:["']|atob\()([a-zA-Z0-9+/]{30,}={0,2})(?:["']|\))/g;
+    let b64Match: RegExpExecArray | null;
+    while ((b64Match = b64Regex.exec(workingText)) !== null) {
+      try {
+        const decoded = Buffer.from(b64Match[1], 'base64').toString('utf8');
+        if (decoded.startsWith('http') && (decoded.includes('.mp4') || decoded.includes('.m3u8') || decoded.includes('.webm') || decoded.includes('.txt'))) {
+          addSource(decoded);
+        }
+      } catch {}
+    }
+
     // Protocol-relative
     const protoPatterns = [
       /(\/\/[^\s"'<>]*\.m3u8(?:\?[^\s"'<>]*)?)/gi,
@@ -313,14 +325,17 @@ function extractVideoSourcesFromHtml($: cheerio.CheerioAPI, html: string, baseUr
   }
 
   // 5. Iframe embedding – collect iframe src that might be video host
-  $('iframe').each((_: number, el: any) => {
-    const src = $(el).attr('src');
-    if (src && src.startsWith('http') && !src.includes('google') && !src.includes('facebook') && !src.includes('twitter') && !src.includes('recaptcha')) {
-      const normalized = normalizeUrl(src, baseUrl);
-      
-      // If it looks like a direct video link, add it as a source
-      if (normalized.includes('.mp4') || normalized.includes('.m3u8') || normalized.includes('get_video')) {
-        addSource(normalized);
+  $('iframe, div, span, video, source').each((_: number, el: any) => {
+    const attrs = ['src', 'data-src', 'data-url', 'data-video', 'data-file', 'data-hls'];
+    for (const attr of attrs) {
+      const src = $(el).attr(attr);
+      if (src && src.startsWith('http') && !src.includes('google') && !src.includes('facebook') && !src.includes('twitter') && !src.includes('recaptcha')) {
+        const normalized = normalizeUrl(src, baseUrl);
+        
+        // If it looks like a direct video link, add it as a source
+        if (normalized.includes('.mp4') || normalized.includes('.m3u8') || normalized.includes('get_video')) {
+          addSource(normalized);
+        }
       }
     }
   });
@@ -333,12 +348,15 @@ async function tryIframeExtraction($: cheerio.CheerioAPI, baseUrl: string, depth
   const iframeSources: VideoSource[] = [];
   const iframes: string[] = [];
 
-  $('iframe').each((_: number, el: any) => {
-    const src = $(el).attr('src');
-    if (src) {
-      const normalized = normalizeUrl(src, baseUrl);
-      if (normalized.startsWith('http') && !normalized.includes('google') && !normalized.includes('facebook') && !normalized.includes('twitter') && !normalized.includes('recaptcha')) {
-        iframes.push(normalized);
+  $('iframe, div, span').each((_: number, el: any) => {
+    const attrs = ['src', 'data-src', 'data-url', 'data-video', 'data-file', 'data-hls'];
+    for (const attr of attrs) {
+      const src = $(el).attr(attr);
+      if (src) {
+        const normalized = normalizeUrl(src, baseUrl);
+        if (normalized.startsWith('http') && !normalized.includes('google') && !normalized.includes('facebook') && !normalized.includes('twitter') && !normalized.includes('recaptcha')) {
+          iframes.push(normalized);
+        }
       }
     }
   });
@@ -458,12 +476,15 @@ export async function parseGeneric(url: string, parentReferer?: string): Promise
     });
 
     const iframeUrls: string[] = [];
-    $('iframe').each((_: number, el: any) => {
-      const src = $(el).attr('src');
-      if (src) {
-        const normalized = normalizeUrl(src, url);
-        if (normalized.startsWith('http') && !normalized.includes('google') && !normalized.includes('facebook') && !normalized.includes('twitter') && !normalized.includes('recaptcha')) {
-          iframeUrls.push(normalized);
+    $('iframe, div, span').each((_: number, el: any) => {
+      const attrs = ['src', 'data-src', 'data-url', 'data-video', 'data-file', 'data-hls'];
+      for (const attr of attrs) {
+        const src = $(el).attr(attr);
+        if (src) {
+          const normalized = normalizeUrl(src, url);
+          if (normalized.startsWith('http') && !normalized.includes('google') && !normalized.includes('facebook') && !normalized.includes('twitter') && !normalized.includes('recaptcha')) {
+            iframeUrls.push(normalized);
+          }
         }
       }
     });
