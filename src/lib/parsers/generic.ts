@@ -1,71 +1,41 @@
+/* eslint-disable @typescript-eslint/no-explicit-any */
 import * as cheerio from 'cheerio';
 import { VideoInfo, VideoSource } from '../types';
+import { fetchPublicUrl, readResponseText } from '../proxy-utils';
 import { detectPacked, unpackAllLayers } from './unpacker';
 
-const CORS_PROXIES = [
-  'https://api.allorigins.win/raw?url=',
-  'https://api.codetabs.com/v1/proxy/?quest=',
-];
-
-const FETCH_TIMEOUT = 20000;
-const PROXY_TIMEOUT = 25000;
+const FETCH_TIMEOUT = 12_000;
 
 async function fetchWithFallback(url: string, referer?: string): Promise<Response> {
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), FETCH_TIMEOUT);
 
-  const ref = referer || url;
-  let origin = '';
   try {
-    const u = new URL(ref);
-    origin = `${u.protocol}//${u.host}`;
-  } catch {
-    origin = 'https://example.com';
-  }
-
-  const headers: Record<string, string> = {
-    'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
-    'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8',
-    'Accept-Language': 'en-US,en;q=0.5',
-    'Referer': ref,
-    'Origin': origin,
-    'Cache-Control': 'no-cache',
-    'Pragma': 'no-cache',
-  };
-
-  try {
-    const response = await fetch(url, {
+    const ref = referer || url;
+    const response = await fetchPublicUrl(url, {
       signal: controller.signal,
-      headers,
-      redirect: 'follow',
+      headers: {
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36',
+        'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
+        'Accept-Language': 'en-US,en;q=0.8',
+        'Referer': ref,
+        'Cache-Control': 'no-cache',
+      },
     });
+    if (!response.ok) throw new Error(`Source returned ${response.status}`);
+    return response;
+  } finally {
     clearTimeout(timeout);
-    if (response.ok) return response;
-    throw new Error(`Direct fetch failed: ${response.status}`);
-  } catch (directError) {
-    clearTimeout(timeout);
-    for (const proxy of CORS_PROXIES) {
-      try {
-        const proxyController = new AbortController();
-        const proxyTimeout = setTimeout(() => proxyController.abort(), PROXY_TIMEOUT);
-        const proxyResponse = await fetch(`${proxy}${encodeURIComponent(url)}`, {
-          signal: proxyController.signal,
-          headers: {
-            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
-          },
-        });
-        clearTimeout(proxyTimeout);
-        if (proxyResponse.ok) return proxyResponse;
-      } catch {
-        continue;
-      }
-    }
-    throw directError;
   }
 }
 
 function normalizeUrl(raw: string, baseUrl?: string): string {
-  let url = raw.replace(/&amp;/g, '&').trim();
+  let url = raw
+    .replace(/&amp;/g, '&')
+    .replace(/\\\//g, '/')
+    .replace(/\\u0026/gi, '&')
+    .replace(/\\x26/gi, '&')
+    .trim();
   if (!url) return '';
   if (url.startsWith('//')) url = 'https:' + url;
   if (baseUrl && !url.startsWith('http') && !url.startsWith('//') && !url.startsWith('data:') && !url.startsWith('blob:')) {
@@ -157,7 +127,7 @@ function extractVideoSourcesFromHtml($: cheerio.CheerioAPI, html: string, baseUr
 
   const addSource = (rawUrl: string, quality = 'HD', format?: string) => {
     if (!rawUrl) return;
-    let url = normalizeUrl(rawUrl, baseUrl);
+    const url = normalizeUrl(rawUrl, baseUrl);
     if (!url || !url.startsWith('http')) return;
     // Filter out obviously non-video
     const lower = url.toLowerCase();
@@ -183,9 +153,6 @@ function extractVideoSourcesFromHtml($: cheerio.CheerioAPI, html: string, baseUr
     const $video = $(videoEl);
     const src = $video.attr('src');
     if (src) addSource(src);
-    const poster = $video.attr('poster');
-    // poster not video but ignore
-
     $video.find('source').each((_: number, sourceEl: any) => {
       const $source = $(sourceEl);
       const srcUrl = $source.attr('src');
@@ -251,6 +218,7 @@ function extractVideoSourcesFromHtml($: cheerio.CheerioAPI, html: string, baseUr
     /videoUrl["']?\s*[:=]\s*["']([^"']+)["']/gi,
     /source["']?\s*[:=]\s*["'](https?:\/\/[^"']+\.(?:mp4|m3u8)[^"']*)["']/gi,
     /mp4["']?\s*[:=]\s*["'](https?:\/\/[^"']+\.mp4[^"']*)["']/gi,
+    /(?:file|src|source)["']?\s*[:=]\s*["'](https?:\/\/[^"']+\/(?:hls|hls2)\/[^"']+\.txt[^"']*)["']/gi,
   ];
 
   const allScriptText: string[] = [];
@@ -261,7 +229,8 @@ function extractVideoSourcesFromHtml($: cheerio.CheerioAPI, html: string, baseUr
   allScriptText.push(html); // also search whole html
 
   for (const scriptText of allScriptText) {
-    let workingText = scriptText;
+    // JSON embedded in pages often escapes URL slashes and ampersands.
+    let workingText = scriptText.replace(/\\\//g, '/').replace(/\\u0026/gi, '&').replace(/\\x26/gi, '&');
     // Unpack if packed
     if (scriptText.includes('eval(function') || scriptText.includes('function(p,a,c,k,e,')) {
       try {
@@ -288,6 +257,7 @@ function extractVideoSourcesFromHtml($: cheerio.CheerioAPI, html: string, baseUr
       /(https?:\/\/[^\s"'<>]+\.(?:mov|avi|mkv|m4v)(?:\?[^\s"'<>]*)?)/gi,
       /(https?:\/\/[^\s"'<>]*\/get_video\?id=[^\s"'<>]+)/gi,
       /(https?:\/\/[^\s"'<>]*\.urlset\/master\.m3u8[^\s"'<>]*)/gi,
+      /(https?:\/\/[^\s"'<>]*\/(?:hls|hls2)\/[^\s"'<>]+\.txt(?:\?[^\s"'<>]*)?)/gi,
     ];
 
     for (const pat of genericPatterns) {
@@ -339,7 +309,7 @@ async function tryIframeExtraction($: cheerio.CheerioAPI, baseUrl: string, depth
   $('iframe').each((_: number, el: any) => {
     const src = $(el).attr('src');
     if (src) {
-      let normalized = normalizeUrl(src, baseUrl);
+      const normalized = normalizeUrl(src, baseUrl);
       if (normalized.startsWith('http') && !normalized.includes('google') && !normalized.includes('facebook') && !normalized.includes('twitter') && !normalized.includes('recaptcha')) {
         iframes.push(normalized);
       }
@@ -350,7 +320,7 @@ async function tryIframeExtraction($: cheerio.CheerioAPI, baseUrl: string, depth
   for (const iframeUrl of iframes.slice(0, 2)) {
     try {
       const res = await fetchWithFallback(iframeUrl, baseUrl);
-      const html = await res.text();
+      const html = await readResponseText(res, 2_000_000);
       if (!html) continue;
       const $inner = cheerio.load(html);
       const innerSources = extractVideoSourcesFromHtml($inner, html, iframeUrl);
@@ -379,8 +349,45 @@ export async function parseGeneric(url: string): Promise<VideoInfo | null> {
 
   try {
     const response = await fetchWithFallback(url);
-    const html = await response.text();
-    if (!html || html.length < 50) return null;
+    const contentType = (response.headers.get('content-type') || '').toLowerCase();
+    const isHlsResponse = contentType.includes('mpegurl') || contentType.includes('vnd.apple.mpegurl');
+    const isVideoResponse = contentType.startsWith('video/');
+
+    // A direct URL need not include a file extension. Do not buffer a media
+    // response into memory just to identify it.
+    if (isVideoResponse || isHlsResponse) {
+      const fileName = url.split('/').pop()?.split('?')[0] || (isHlsResponse ? 'video.m3u8' : 'video.mp4');
+      const length = Number.parseInt(response.headers.get('content-length') || '0', 10);
+      return {
+        title: fileName,
+        fileName,
+        fileSize: length > 0 ? `${Math.round(length / 1024 / 1024)} MB` : 'Unknown',
+        fileSizeBytes: Number.isFinite(length) ? length : 0,
+        thumbnail: '',
+        sources: [{ url, quality: 'Direct', format: isHlsResponse ? 'HLS' : 'Video', isM3u8: isHlsResponse }],
+        originalUrl: url,
+        downloadUrl: url,
+      };
+    }
+
+    const html = await readResponseText(response, 2_000_000);
+    if (!html) return null;
+
+    if (html.trimStart().startsWith('#EXTM3U')) {
+      const fileName = url.split('/').pop()?.split('?')[0] || 'video.m3u8';
+      return {
+        title: fileName,
+        fileName,
+        fileSize: 'Unknown',
+        fileSizeBytes: 0,
+        thumbnail: '',
+        sources: [{ url, quality: 'HLS', format: 'HLS', isM3u8: true }],
+        originalUrl: url,
+        downloadUrl: url,
+      };
+    }
+
+    if (html.length < 50) return null;
 
     const lower = html.toLowerCase();
     if (lower.includes('file not found') || lower.includes('video not found') || lower.includes('404 not found') && lower.includes('not here')) {

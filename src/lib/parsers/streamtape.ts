@@ -1,5 +1,7 @@
+/* eslint-disable @typescript-eslint/no-explicit-any */
 import * as cheerio from 'cheerio';
 import { VideoInfo, VideoSource } from '../types';
+import { fetchPublicUrl, readResponseText } from '../proxy-utils';
 
 const STREAMTAPE_DOMAINS = [
   'streamtape.com',
@@ -33,13 +35,7 @@ const STREAMTAPE_DOMAINS = [
   'streamtape.co',
 ];
 
-const CORS_PROXIES = [
-  'https://api.allorigins.win/raw?url=',
-  'https://api.codetabs.com/v1/proxy/?quest=',
-];
-
-const FETCH_TIMEOUT = 20000;
-const PROXY_TIMEOUT = 25000;
+const FETCH_TIMEOUT = 12_000;
 
 export function isStreamTapeUrl(url: string): boolean {
   try {
@@ -70,43 +66,21 @@ async function fetchWithFallback(url: string): Promise<Response> {
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), FETCH_TIMEOUT);
 
-  const headers = {
-    'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
-    'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8',
-    'Accept-Language': 'en-US,en;q=0.5',
-    'Referer': 'https://streamtape.com/',
-    'Cache-Control': 'no-cache',
-    'Pragma': 'no-cache',
-  };
-
   try {
-    const response = await fetch(url, {
+    const response = await fetchPublicUrl(url, {
       signal: controller.signal,
-      headers,
-      redirect: 'follow',
+      headers: {
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36',
+        'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
+        'Accept-Language': 'en-US,en;q=0.8',
+        'Referer': `${new URL(url).origin}/`,
+        'Cache-Control': 'no-cache',
+      },
     });
+    if (!response.ok) throw new Error(`Source returned ${response.status}`);
+    return response;
+  } finally {
     clearTimeout(timeout);
-    if (response.ok) return response;
-    throw new Error(`Direct fetch failed: ${response.status}`);
-  } catch (directError) {
-    clearTimeout(timeout);
-    for (const proxy of CORS_PROXIES) {
-      try {
-        const proxyController = new AbortController();
-        const proxyTimeout = setTimeout(() => proxyController.abort(), PROXY_TIMEOUT);
-        const proxyResponse = await fetch(`${proxy}${encodeURIComponent(url)}`, {
-          signal: proxyController.signal,
-          headers: {
-            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
-          },
-        });
-        clearTimeout(proxyTimeout);
-        if (proxyResponse.ok) return proxyResponse;
-      } catch {
-        continue;
-      }
-    }
-    throw directError;
   }
 }
 
@@ -140,14 +114,9 @@ function deduplicateSources(sources: VideoSource[]): VideoSource[] {
  */
 function extractByIdMethod(html: string): string | null {
   try {
-    // Find ById pattern
-    const byIdRegex = /ById\([^)]*?=\s*(["']\/\/[^;<]+)/g;
-    // More permissive version from resolver: ById\('.+?=\s*(["']//[^;<]+)
-    const regex = /ById\(.*?=\s*(["']\/\/[\s\S][^;<]+)/g;
-    let match: RegExpExecArray | null;
     let lastMatch: string | null = null;
 
-    // Try both regexes
+    // Try common StreamTape markup patterns
     const patterns = [
       /ById\(.*?=\s*(["']\/\/[\s\S][^;<]+)/g,
       /getElementById\(.*?\.innerHTML\s*=\s*(["']\/\/[^;<]+)/g,
@@ -215,7 +184,7 @@ function extractByIdMethod(html: string): string | null {
       // Extract string inside quotes: "([^"]*)"
       const p1Match = part.match(/"([^"]*)"/);
       if (!p1Match) continue;
-      let p1 = p1Match[1];
+      const p1 = p1Match[1];
       let p2 = 0;
       if (part.includes('substring')) {
         const subRegex = /substring\((\d+)\)/g;
@@ -395,7 +364,7 @@ export async function parseStreamTape(url: string): Promise<VideoInfo | null> {
   for (const variantUrl of variants) {
     try {
       const response = await fetchWithFallback(variantUrl);
-      const html = await response.text();
+      const html = await readResponseText(response, 2_000_000);
       if (!html || html.length < 200) throw new Error('Empty response from StreamTape');
 
       const lowerHtml = html.toLowerCase();

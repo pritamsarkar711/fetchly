@@ -14,6 +14,8 @@ export interface VideoSource {
   quality: string;
   format: string;
   isM3u8: boolean;
+  /** Page URL that produced this temporary media URL. Used for hotlink protection. */
+  referer?: string;
 }
 
 export interface FetchResult {

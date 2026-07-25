@@ -1,6 +1,8 @@
+/* eslint-disable @typescript-eslint/no-explicit-any */
 import * as cheerio from 'cheerio';
 import { VideoInfo, VideoSource } from '../types';
-import { detectPacked, unpackPacked, unpackAllLayers } from './unpacker';
+import { fetchPublicUrl, readResponseText } from '../proxy-utils';
+import { detectPacked, unpackAllLayers } from './unpacker';
 
 const MIXDROP_DOMAINS = [
   'mixdrop.co', 'mixdrop.to', 'mixdrop.sx', 'mixdrop.bz',
@@ -15,22 +17,7 @@ const MIXDROP_DOMAINS = [
   'mixdrop.cf',
 ];
 
-// Allow mxcontent domains for direct video
-const VIDEO_CDN_DOMAINS = [
-  'mxcontent.net',
-  'mxdcontent.net',
-  'mxdrop',
-  'mixdrop',
-  'mixdrop',
-];
-
-const CORS_PROXIES = [
-  'https://api.allorigins.win/raw?url=',
-  'https://api.codetabs.com/v1/proxy/?quest=',
-];
-
-const FETCH_TIMEOUT = 15000;
-const PROXY_TIMEOUT = 20000;
+const FETCH_TIMEOUT = 12_000;
 
 export function isMixDropUrl(url: string): boolean {
   try {
@@ -60,43 +47,20 @@ async function fetchWithFallback(url: string): Promise<Response> {
   const timeout = setTimeout(() => controller.abort(), FETCH_TIMEOUT);
 
   try {
-    const response = await fetch(url, {
+    const response = await fetchPublicUrl(url, {
       signal: controller.signal,
       headers: {
-        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36',
         'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
-        'Accept-Language': 'en-US,en;q=0.5',
-        'Referer': 'https://mixdrop.co/',
+        'Accept-Language': 'en-US,en;q=0.8',
+        'Referer': `${new URL(url).origin}/`,
         'Cache-Control': 'no-cache',
-        'Pragma': 'no-cache',
       },
-      redirect: 'follow',
     });
+    if (!response.ok) throw new Error(`Source returned ${response.status}`);
+    return response;
+  } finally {
     clearTimeout(timeout);
-    if (response.ok) return response;
-    // If not ok, try proxies
-    throw new Error(`Direct fetch failed: ${response.status}`);
-  } catch (directError) {
-    clearTimeout(timeout);
-    for (const proxy of CORS_PROXIES) {
-      try {
-        const proxyController = new AbortController();
-        const proxyTimeout = setTimeout(() => proxyController.abort(), PROXY_TIMEOUT);
-        const proxyResponse = await fetch(`${proxy}${encodeURIComponent(url)}`, {
-          signal: proxyController.signal,
-          headers: {
-            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
-          },
-        });
-        clearTimeout(proxyTimeout);
-        if (proxyResponse.ok) {
-          return proxyResponse;
-        }
-      } catch {
-        continue;
-      }
-    }
-    throw directError;
   }
 }
 
@@ -144,7 +108,7 @@ function extractFromUnpackedCode(code: string): VideoSource[] {
 
   // First, collect MDCore urls
   const mdcoreUrls = extractMDCoreUrls(code);
-  for (let raw of mdcoreUrls) {
+  for (const raw of mdcoreUrls) {
     let url = raw.trim();
     if (url.startsWith('//')) url = 'https:' + url;
     else if (!url.startsWith('http')) {
@@ -241,12 +205,9 @@ function processScripts($: cheerio.CheerioAPI): VideoSource[] {
       if (processedHashes.has(hash)) return;
       processedHashes.add(hash);
 
-      let workingText = trimmed;
-
       if (trimmed.includes('eval(function') || trimmed.includes('function(p,a,c,k,e,')) {
         const unpacked = unpackJs(trimmed);
         if (unpacked) {
-          workingText = unpacked;
           const sources = extractFromUnpackedCode(unpacked);
           allSources.push(...sources);
           // Also try extracting any direct video urls from unpacked text
@@ -505,12 +466,12 @@ export async function parseMixDrop(url: string): Promise<VideoInfo | null> {
   if (url.includes('/e/')) variants.add(url.replace('/e/', '/f/'));
 
   let lastError: any = null;
-  let bestResult: VideoInfo | null = null;
+  const bestResult: VideoInfo | null = null;
 
   for (const variantUrl of variants) {
     try {
       const response = await fetchWithFallback(variantUrl);
-      const html = await response.text();
+      const html = await readResponseText(response, 2_000_000);
       if (!html || html.length < 100) {
         throw new Error('Empty or invalid response from MixDrop');
       }

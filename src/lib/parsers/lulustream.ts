@@ -1,5 +1,7 @@
+/* eslint-disable @typescript-eslint/no-explicit-any */
 import * as cheerio from 'cheerio';
 import { VideoInfo, VideoSource } from '../types';
+import { fetchPublicUrl, readResponseText } from '../proxy-utils';
 import { detectPacked, unpackAllLayers } from './unpacker';
 
 const LULUSTREAM_DOMAINS = [
@@ -22,13 +24,7 @@ const LULUSTREAM_DOMAINS = [
   // generic tnmr host will be caught via CDN, but not as page host
 ];
 
-const CORS_PROXIES = [
-  'https://api.allorigins.win/raw?url=',
-  'https://api.codetabs.com/v1/proxy/?quest=',
-];
-
-const FETCH_TIMEOUT = 20000;
-const PROXY_TIMEOUT = 25000;
+const FETCH_TIMEOUT = 12_000;
 
 export function isLuluStreamUrl(url: string): boolean {
   try {
@@ -62,49 +58,21 @@ async function fetchWithFallback(url: string): Promise<Response> {
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), FETCH_TIMEOUT);
 
-  const headers = {
-    'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
-    'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8',
-    'Accept-Language': 'en-US,en;q=0.5',
-    'Referer': 'https://luluvdo.com/',
-    'Origin': 'https://luluvdo.com',
-    'Cache-Control': 'no-cache',
-    'Pragma': 'no-cache',
-    'Upgrade-Insecure-Requests': '1',
-    'Sec-Fetch-Dest': 'document',
-    'Sec-Fetch-Mode': 'navigate',
-    'Sec-Fetch-Site': 'same-origin',
-  };
-
   try {
-    const response = await fetch(url, {
+    const response = await fetchPublicUrl(url, {
       signal: controller.signal,
-      headers,
-      redirect: 'follow',
+      headers: {
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36',
+        'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
+        'Accept-Language': 'en-US,en;q=0.8',
+        'Referer': `${new URL(url).origin}/`,
+        'Cache-Control': 'no-cache',
+      },
     });
+    if (!response.ok) throw new Error(`Source returned ${response.status}`);
+    return response;
+  } finally {
     clearTimeout(timeout);
-    if (response.ok) return response;
-    throw new Error(`Direct fetch failed: ${response.status}`);
-  } catch (directError) {
-    clearTimeout(timeout);
-    for (const proxy of CORS_PROXIES) {
-      try {
-        const proxyController = new AbortController();
-        const proxyTimeout = setTimeout(() => proxyController.abort(), PROXY_TIMEOUT);
-        const proxyResponse = await fetch(`${proxy}${encodeURIComponent(url)}`, {
-          signal: proxyController.signal,
-          headers: {
-            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
-            'Referer': 'https://luluvdo.com/',
-          },
-        });
-        clearTimeout(proxyTimeout);
-        if (proxyResponse.ok) return proxyResponse;
-      } catch {
-        continue;
-      }
-    }
-    throw directError;
   }
 }
 
@@ -362,7 +330,7 @@ export async function parseLuluStream(url: string): Promise<VideoInfo | null> {
   for (const variantUrl of variants) {
     try {
       const response = await fetchWithFallback(variantUrl);
-      const html = await response.text();
+      const html = await readResponseText(response, 2_000_000);
       if (!html || html.length < 200) throw new Error('Empty response from LuluStream');
 
       if (html.includes('WE ARE SORRY') || html.includes('File Not Found') || html.includes('404 Not Found') || html.toLowerCase().includes('file was deleted') || html.toLowerCase().includes('file not found')) {

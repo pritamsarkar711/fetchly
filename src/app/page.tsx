@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useRef, useEffect, FormEvent, KeyboardEvent } from 'react';
+import { useState, useRef, useEffect, FormEvent } from 'react';
 import { useRouter } from 'next/navigation';
 
 export default function Home() {
@@ -43,12 +43,6 @@ export default function Home() {
     router.push(`/results?url=${encodeURIComponent(url)}`);
   };
 
-  const handleKeyDown = (e: KeyboardEvent<HTMLInputElement>) => {
-    if (e.key === 'Enter') {
-      handleSubmit(e as any);
-    }
-  };
-
   return (
     <div className="flex flex-col min-h-screen bg-white">
       {/* Main content - clean, no Google-like header/footer */}
@@ -79,7 +73,6 @@ export default function Home() {
                 type="text"
                 value={query}
                 onChange={(e) => { setQuery(e.target.value); if (error) setError(''); }}
-                onKeyDown={handleKeyDown}
                 placeholder="Paste video URL..."
                 className="flex-1 outline-none text-base bg-transparent text-gray-800 placeholder-gray-400 min-w-0"
                 autoComplete="off"
@@ -105,37 +98,17 @@ export default function Home() {
             <p className="text-red-500 text-xs sm:text-sm mt-2 text-center" role="alert">{error}</p>
           )}
 
-          <div className="flex justify-center gap-2 sm:gap-3 mt-5 sm:mt-6">
+          <div className="mt-5 flex justify-center sm:mt-6">
             <button
               type="submit"
-              className="bg-[#f8f9fa] text-[#3c4043] text-sm px-4 sm:px-5 py-2 sm:py-2.5 rounded-md border border-[#f8f9fa] hover:border-gray-200 hover:shadow-sm transition-all font-medium active:bg-gray-100"
+              className="rounded-md border border-[#f8f9fa] bg-[#f8f9fa] px-5 py-2 text-sm font-medium text-[#3c4043] transition-all hover:border-gray-200 hover:shadow-sm active:bg-gray-100"
             >
               Fetch Video
-            </button>
-            <button
-              type="button"
-              onClick={() => { setQuery(''); setError(''); }}
-              className="bg-[#f8f9fa] text-[#3c4043] text-sm px-4 sm:px-5 py-2 sm:py-2.5 rounded-md border border-[#f8f9fa] hover:border-gray-200 hover:shadow-sm transition-all font-medium active:bg-gray-100"
-            >
-              Clear
             </button>
           </div>
         </form>
 
-        {/* Supported sites */}
-        <div className="mt-7 sm:mt-8 text-center">
-          <p className="text-xs text-gray-500 mb-2">Supported sites</p>
-          <div className="flex flex-wrap items-center justify-center gap-2 sm:gap-3">
-            <span className="text-xs text-gray-600 bg-gray-50 px-2.5 sm:px-3 py-1 rounded-full border border-gray-100">MixDrop</span>
-            <span className="text-xs text-gray-600 bg-purple-50 px-2.5 sm:px-3 py-1 rounded-full border border-purple-100">LuluStream</span>
-            <span className="text-xs text-gray-600 bg-gray-50 px-2.5 sm:px-3 py-1 rounded-full border border-gray-100">LuluVdo</span>
-            <span className="text-xs text-gray-600 bg-blue-50 px-2.5 sm:px-3 py-1 rounded-full border border-blue-100">Vidara</span>
-            <span className="text-xs text-gray-600 bg-orange-50 px-2.5 sm:px-3 py-1 rounded-full border border-orange-100">FireStream</span>
-            <span className="text-xs text-gray-600 bg-pink-50 px-2.5 sm:px-3 py-1 rounded-full border border-pink-100">Playmate</span>
-            <span className="text-xs text-gray-600 bg-red-50 px-2.5 sm:px-3 py-1 rounded-full border border-red-100">StreamTape</span>
-            <span className="text-xs text-gray-400 bg-gray-50 px-2.5 sm:px-3 py-1 rounded-full border border-gray-100">Direct URLs</span>
-          </div>
-        </div>
+
       </main>
     </div>
   );
