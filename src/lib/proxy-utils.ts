@@ -1,6 +1,17 @@
 import { lookup } from 'node:dns/promises';
 import { isIP } from 'node:net';
 
+// Proxy dispatcher setup for undici if PROXY_URL is set
+let proxyDispatcher: any = null;
+if (typeof process !== 'undefined' && process.env.PROXY_URL) {
+  try {
+    const { ProxyAgent } = require('undici');
+    proxyDispatcher = new ProxyAgent({ uri: process.env.PROXY_URL });
+  } catch (err) {
+    console.warn('Could not setup undici ProxyAgent:', err);
+  }
+}
+
 /** Shared validation and request helpers for untrusted media URLs. */
 
 const ALLOWED_PORTS = new Set(['', '80', '443', '8080', '8443']);
@@ -100,8 +111,13 @@ export async function fetchPublicUrl(
   let currentUrl = await validatePublicUrl(input);
   if (!currentUrl) throw new Error('Invalid or blocked source URL');
 
+  const fetchInit: any = { ...init, redirect: 'manual' };
+  if (proxyDispatcher) {
+    fetchInit.dispatcher = proxyDispatcher;
+  }
+
   for (let redirects = 0; redirects <= maxRedirects; redirects += 1) {
-    const response = await fetch(currentUrl, { ...init, redirect: 'manual' });
+    const response = await fetch(currentUrl, fetchInit);
     if (!REDIRECT_STATUSES.has(response.status)) return response;
 
     const location = response.headers.get('location');

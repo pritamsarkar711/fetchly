@@ -7,6 +7,7 @@ import { parsePlaymate, isPlaymateUrl } from './playmate';
 import { parseStreamTape, isStreamTapeUrl } from './streamtape';
 import { parseDoodStream, isDoodStreamUrl } from './doodstream';
 import { parseGeneric } from './generic';
+import { parseWithYtDlp } from './ytdlp';
 import { fetchPublicUrl, getHeadersForUrl, readResponseText } from '../proxy-utils';
 
 const VIDEO_EXTENSIONS = /\.(?:mp4|m4v|webm|mov|mkv|avi|ogv)(?:$|[?#])/i;
@@ -95,13 +96,14 @@ function friendlyError(error: unknown): string {
 async function attemptParser(
   parser: () => Promise<VideoInfo | null>,
   setLastError: (error: unknown) => void,
+  timeoutMs = 13_000
 ): Promise<VideoInfo | null> {
   let timeout: ReturnType<typeof setTimeout> | undefined;
   try {
     return await Promise.race([
       parser(),
       new Promise<null>((_, reject) => {
-        timeout = setTimeout(() => reject(new Error('Parser timeout')), 13_000);
+        timeout = setTimeout(() => reject(new Error('Parser timeout')), timeoutMs);
       }),
     ]);
   } catch (error) {
@@ -167,7 +169,11 @@ async function expandHlsVariants(sources: VideoSource[]): Promise<VideoSource[]>
   return expanded;
 }
 
-export async function parseUrl(url: string): Promise<FetchResult> {
+export async function parseUrl(url: string, depth = 0, referer?: string): Promise<FetchResult> {
+  if (depth > 2) {
+    return { success: false, error: 'Maximum redirection depth exceeded.' };
+  }
+
   if (!url || typeof url !== 'string' || !url.trim()) {
     return { success: false, error: 'Enter a valid URL.' };
   }
@@ -198,10 +204,25 @@ export async function parseUrl(url: string): Promise<FetchResult> {
   if (!data && isPlaymateUrl(normalizedUrl)) data = await attemptParser(() => parsePlaymate(normalizedUrl), captureError);
   if (!data && isStreamTapeUrl(normalizedUrl)) data = await attemptParser(() => parseStreamTape(normalizedUrl), captureError);
   if (!data && isDoodStreamUrl(normalizedUrl)) data = await attemptParser(() => parseDoodStream(normalizedUrl), captureError);
-  if (!data) data = await attemptParser(() => parseGeneric(normalizedUrl), captureError);
+  // yt-dlp is highly reliable, try it before generic parsing
+  if (!data) data = await attemptParser(() => parseWithYtDlp(normalizedUrl, referer), captureError, 28_000);
+  if (!data) data = await attemptParser(() => parseGeneric(normalizedUrl, referer), captureError);
   if (!data) data = await attemptParser(() => genericFetch(normalizedUrl), captureError);
 
   if (!data?.sources?.length) {
+    if (data?.iframeUrls && data.iframeUrls.length > 0) {
+      // Try to parse the first few iframes
+      for (const iframeUrl of data.iframeUrls.slice(0, 3)) {
+        try {
+          const result = await parseUrl(iframeUrl, depth + 1, normalizedUrl);
+          if (result.success && result.data && result.data.sources.length > 0) {
+            return result;
+          }
+        } catch {
+          // ignore error and try next iframe
+        }
+      }
+    }
     return { success: false, error: friendlyError(lastError) };
   }
 
