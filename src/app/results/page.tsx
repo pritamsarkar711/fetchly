@@ -294,7 +294,7 @@ function ResultsContent() {
                   )}
                   <span>{result.data.sources.length} source{result.data.sources.length !== 1 ? 's' : ''}</span>
                   <span className="bg-gray-100 px-1.5 py-0.5 rounded text-[10px]">
-                    {result.data.originalUrl.includes('lulu') ? 'LuluStream' : result.data.originalUrl.includes('vidara') ? 'Vidara' : result.data.originalUrl.includes('firestream') ? 'FireStream' : result.data.originalUrl.includes('playmate') ? 'Playmate' : 'MixDrop'}
+                    {result.data.originalUrl.includes('lulu') ? 'LuluStream' : result.data.originalUrl.includes('vidara') ? 'Vidara' : result.data.originalUrl.includes('firestream') ? 'FireStream' : result.data.originalUrl.includes('playmate') ? 'Playmate' : result.data.originalUrl.includes('streamtape') ? 'StreamTape' : 'MixDrop'}
                   </span>
                   <span className="bg-green-50 text-green-700 px-1.5 py-0.5 rounded text-[10px] border border-green-100">Direct Links Fixed</span>
                 </div>

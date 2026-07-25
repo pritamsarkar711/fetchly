@@ -4,6 +4,7 @@ import { parseLuluStream, isLuluStreamUrl } from './lulustream';
 import { parseVidara, isVidaraUrl } from './vidara';
 import { parseFireStream, isFireStreamUrl } from './firestream';
 import { parsePlaymate, isPlaymateUrl } from './playmate';
+import { parseStreamTape, isStreamTapeUrl } from './streamtape';
 
 /**
  * Detect which site the URL belongs to and return the appropriate parser
@@ -46,6 +47,10 @@ export async function parseUrl(url: string): Promise<FetchResult> {
 
     if (!data && isPlaymateUrl(normalizedUrl)) {
       data = await parsePlaymate(normalizedUrl);
+    }
+
+    if (!data && isStreamTapeUrl(normalizedUrl)) {
+      data = await parseStreamTape(normalizedUrl);
     }
 
     if (!data) {

@@ -134,6 +134,28 @@ export function getHeadersForUrl(upstreamUrl: string): Record<string, string> {
     };
   }
 
+  // StreamTape
+  if (
+    lower.includes('streamtape.com') ||
+    lower.includes('strtape.cloud') ||
+    lower.includes('streamtape.net') ||
+    lower.includes('streamta.pe') ||
+    lower.includes('streamtape.site') ||
+    lower.includes('strcloud.link') ||
+    lower.includes('shavetape.cash') ||
+    lower.includes('streamtape.to') ||
+    lower.includes('streamtape.xyz') ||
+    lower.includes('tapeblocker.com') ||
+    lower.includes('streamtape') ||
+    lower.includes('stape.fun')
+  ) {
+    return {
+      ...base,
+      'Referer': 'https://streamtape.com/',
+      'Origin': 'https://streamtape.com',
+    };
+  }
+
   // MixDrop
   if (
     lower.includes('mxcontent') ||
