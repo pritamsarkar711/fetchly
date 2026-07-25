@@ -120,6 +120,20 @@ export function getHeadersForUrl(upstreamUrl: string): Record<string, string> {
     };
   }
 
+  // Playmate
+  if (
+    lower.includes('playmate.to') ||
+    lower.includes('playmate.is') ||
+    lower.includes('playmate.so') ||
+    lower.includes('playmate')
+  ) {
+    return {
+      ...base,
+      'Referer': 'https://playmate.to/',
+      'Origin': 'https://playmate.to',
+    };
+  }
+
   // MixDrop
   if (
     lower.includes('mxcontent') ||

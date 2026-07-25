@@ -3,6 +3,7 @@ import { parseMixDrop, isMixDropUrl } from './mixdrop';
 import { parseLuluStream, isLuluStreamUrl } from './lulustream';
 import { parseVidara, isVidaraUrl } from './vidara';
 import { parseFireStream, isFireStreamUrl } from './firestream';
+import { parsePlaymate, isPlaymateUrl } from './playmate';
 
 /**
  * Detect which site the URL belongs to and return the appropriate parser
@@ -41,6 +42,10 @@ export async function parseUrl(url: string): Promise<FetchResult> {
 
     if (!data && isFireStreamUrl(normalizedUrl)) {
       data = await parseFireStream(normalizedUrl);
+    }
+
+    if (!data && isPlaymateUrl(normalizedUrl)) {
+      data = await parsePlaymate(normalizedUrl);
     }
 
     if (!data) {
