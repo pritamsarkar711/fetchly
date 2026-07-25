@@ -1,15 +1,23 @@
 'use client';
 
 import { useSearchParams, useRouter } from 'next/navigation';
-import { useEffect, useState, Suspense, useCallback } from 'react';
+import { useEffect, useState, Suspense, useCallback, useRef } from 'react';
 import { FetchResult, VideoSource } from '@/lib/types';
 import Link from 'next/link';
+
+// Helpers to build proxied URLs - these avoid CORS and Referer issues
+function getStreamUrl(sourceUrl: string): string {
+  return `/api/stream?url=${encodeURIComponent(sourceUrl)}`;
+}
+function getDownloadUrl(sourceUrl: string, fileName: string): string {
+  const safeName = fileName || 'video.mp4';
+  return `/api/download?url=${encodeURIComponent(sourceUrl)}&filename=${encodeURIComponent(safeName)}`;
+}
 
 function ResultsContent() {
   const searchParams = useSearchParams();
   const router = useRouter();
   const rawUrl = searchParams.get('url');
-  // Sanitize: ensure URL is valid to prevent XSS
   const url = rawUrl && /^https?:\/\//i.test(rawUrl) ? rawUrl : null;
 
   const [result, setResult] = useState<FetchResult | null>(null);
@@ -18,12 +26,16 @@ function ResultsContent() {
   const [watchSource, setWatchSource] = useState<VideoSource | null>(null);
   const [copiedIndex, setCopiedIndex] = useState<number | null>(null);
   const [newUrl, setNewUrl] = useState(url || '');
+  const [videoError, setVideoError] = useState('');
+  const videoRef = useRef<HTMLVideoElement>(null);
+  const hlsRef = useRef<any>(null);
 
   const fetchVideo = useCallback(async (videoUrl: string) => {
     setLoading(true);
     setError('');
     setResult(null);
     setWatchSource(null);
+    setVideoError('');
 
     try {
       const res = await fetch(`/api/fetch?url=${encodeURIComponent(videoUrl)}`, {
@@ -35,7 +47,44 @@ function ResultsContent() {
       }
       const data: FetchResult = await res.json();
       if (data.success && data.data) {
-        setResult(data);
+        // Filter out any non-true video sources that might have slipped through
+        // Ensure we prioritize MP4 for direct download
+        const filtered = {
+          ...data.data,
+          sources: data.data.sources.filter(s => {
+            const u = s.url.toLowerCase();
+            // Universal filter: allow any video-like URL for any site
+            return (
+              u.includes('.mp4') ||
+              u.includes('.m3u8') ||
+              u.includes('.webm') ||
+              u.includes('.mov') ||
+              u.includes('.avi') ||
+              u.includes('.mkv') ||
+              u.includes('.m4v') ||
+              u.includes('get_video') ||
+              u.includes('mxdcontent') ||
+              u.includes('mxcontent') ||
+              u.includes('delivery') ||
+              u.includes('streamtape') ||
+              u.includes('vidara') ||
+              u.includes('playmate') ||
+              u.includes('firestream') ||
+              u.includes('lulu') ||
+              u.includes('tnmr') ||
+              u.includes('master.m3u8') ||
+              u.includes('.urlset') ||
+              u.includes('hls') ||
+              u.includes('/videos/') ||
+              u.includes('signed')
+            );
+          })
+        };
+        // If filtering removed everything, keep original but it will be handled
+        if (filtered.sources.length === 0 && data.data.sources.length > 0) {
+          filtered.sources = data.data.sources;
+        }
+        setResult({ ...data, data: filtered });
       } else {
         setError(data.error || 'Could not fetch video from this URL');
       }
@@ -55,6 +104,71 @@ function ResultsContent() {
     fetchVideo(url);
   }, [url, fetchVideo]);
 
+  // HLS handling
+  useEffect(() => {
+    if (!watchSource || !videoRef.current) return;
+    setVideoError('');
+
+    if (watchSource.isM3u8) {
+      const video = videoRef.current;
+      const streamUrl = getStreamUrl(watchSource.url);
+
+      // If browser natively supports HLS (Safari)
+      if (video.canPlayType('application/vnd.apple.mpegurl')) {
+        video.src = streamUrl;
+        video.play().catch(() => {});
+        return;
+      }
+
+      // Otherwise try hls.js
+      import('hls.js').then(({ default: Hls }) => {
+        if (Hls.isSupported()) {
+          if (hlsRef.current) {
+            hlsRef.current.destroy();
+          }
+          const hls = new Hls({
+            xhrSetup: (xhr: any, url: string) => {
+              // hls.js will request segment urls that are already proxied via our rewrite,
+              // but just in case, ensure headers
+              xhr.withCredentials = false;
+            }
+          });
+          hlsRef.current = hls;
+          hls.loadSource(streamUrl);
+          hls.attachMedia(video);
+          hls.on(Hls.Events.MANIFEST_PARSED, () => {
+            video.play().catch(() => {});
+          });
+          hls.on(Hls.Events.ERROR, (_evt: any, data: any) => {
+            if (data.fatal) {
+              setVideoError(`HLS error: ${data.type} - ${data.details}`);
+            }
+          });
+        } else {
+          setVideoError('Your browser does not support HLS streaming. Try opening in VLC.');
+        }
+      }).catch(() => {
+        setVideoError('Failed to load video player. Use external player.');
+      });
+    } else {
+      // MP4: set src to proxied stream
+      if (videoRef.current) {
+        videoRef.current.src = getStreamUrl(watchSource.url);
+        videoRef.current.load();
+        videoRef.current.play().catch(() => {
+          // autoplay might be blocked
+        });
+      }
+    }
+
+    return () => {
+      if (hlsRef.current) {
+        hlsRef.current.destroy();
+        hlsRef.current = null;
+      }
+    };
+  }, [watchSource]);
+
   const handleNewSubmit = (e: React.FormEvent) => {
     e.preventDefault();
     const trimmed = newUrl.trim();
@@ -71,7 +185,6 @@ function ResultsContent() {
       setCopiedIndex(index);
       setTimeout(() => setCopiedIndex(null), 2000);
     } catch {
-      // Fallback for older browsers
       const textarea = document.createElement('textarea');
       textarea.value = text;
       textarea.style.position = 'fixed';
@@ -85,29 +198,26 @@ function ResultsContent() {
     }
   };
 
-  const handleDownload = async (source: VideoSource, fileName: string) => {
-    try {
-      const response = await fetch(source.url, {
-        mode: 'cors',
-        headers: { 'Accept': 'video/*,*/*' },
-      });
-      if (!response.ok) {
-        window.open(source.url, '_blank');
-        return;
+  // FIXED: Direct download using our proxy endpoint - no redirect to MixDrop page
+  const handleDownload = (source: VideoSource, fileName: string) => {
+    const ext = source.isM3u8 ? '.m3u8' : '.mp4';
+    let safeFileName = fileName || 'video';
+    if (!safeFileName.toLowerCase().endsWith(ext)) {
+      // Ensure proper extension, but keep original name if it already has extension
+      if (!/\.(mp4|m3u8|mkv|avi|mov|webm)$/i.test(safeFileName)) {
+        safeFileName = safeFileName + ext;
       }
-      const blob = await response.blob();
-      const blobUrl = URL.createObjectURL(blob);
-      const a = document.createElement('a');
-      a.href = blobUrl;
-      const ext = source.isM3u8 ? '.m3u8' : '.mp4';
-      a.download = (fileName || 'video') + ext;
-      document.body.appendChild(a);
-      a.click();
-      document.body.removeChild(a);
-      setTimeout(() => URL.revokeObjectURL(blobUrl), 60000);
-    } catch {
-      window.open(source.url, '_blank');
     }
+    const downloadUrl = getDownloadUrl(source.url, safeFileName);
+    
+    // Create anchor and trigger download directly
+    const a = document.createElement('a');
+    a.href = downloadUrl;
+    a.download = safeFileName;
+    a.rel = 'noopener';
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
   };
 
   const handleRetry = () => {
@@ -131,7 +241,6 @@ function ResultsContent() {
 
   return (
     <div className="min-h-screen bg-white">
-      {/* Header */}
       <header className="sticky top-0 z-50 bg-white/95 backdrop-blur-sm border-b border-gray-100">
         <div className="max-w-5xl mx-auto px-3 sm:px-4 py-2 sm:py-2.5 flex items-center gap-2 sm:gap-4">
           <Link href="/" className="flex items-center gap-0 flex-shrink-0" aria-label="Fetchly Home">
@@ -163,7 +272,6 @@ function ResultsContent() {
       </header>
 
       <main className="max-w-5xl mx-auto px-3 sm:px-4 py-4 sm:py-6">
-        {/* Loading state */}
         {loading && (
           <div className="flex flex-col items-center justify-center py-16 sm:py-20">
             <div className="w-7 h-7 sm:w-8 sm:h-8 border-[3px] border-gray-200 border-t-blue-500 rounded-full animate-spin mb-3"></div>
@@ -171,7 +279,6 @@ function ResultsContent() {
           </div>
         )}
 
-        {/* Error state */}
         {error && !loading && (
           <div className="text-center py-12 sm:py-16">
             <div className="text-3xl sm:text-4xl mb-3 text-gray-300">:(</div>
@@ -191,10 +298,8 @@ function ResultsContent() {
           </div>
         )}
 
-        {/* Results */}
         {result?.data && !loading && (
           <div className="space-y-3 sm:space-y-4">
-            {/* Video Info Card */}
             <div className="bg-white border border-gray-200 rounded-lg overflow-hidden">
               <div className="p-3 sm:p-4">
                 <h1 className="text-sm sm:text-base font-medium text-gray-900 truncate" title={result.data.fileName || result.data.title}>
@@ -211,7 +316,10 @@ function ResultsContent() {
                     </span>
                   )}
                   <span>{result.data.sources.length} source{result.data.sources.length !== 1 ? 's' : ''}</span>
-                  <span className="bg-gray-100 px-1.5 py-0.5 rounded text-[10px]">MixDrop</span>
+                  <span className="bg-gray-100 px-1.5 py-0.5 rounded text-[10px]">
+                    {result.data.originalUrl.includes('lulu') ? 'LuluStream' : result.data.originalUrl.includes('vidara') ? 'Vidara' : result.data.originalUrl.includes('firestream') ? 'FireStream' : result.data.originalUrl.includes('playmate') ? 'Playmate' : result.data.originalUrl.includes('streamtape') ? 'StreamTape' : 'MixDrop'}
+                  </span>
+                  <span className="bg-green-50 text-green-700 px-1.5 py-0.5 rounded text-[10px] border border-green-100">Direct Links Fixed</span>
                 </div>
               </div>
               {result.data.thumbnail && !watchSource && (
@@ -227,45 +335,54 @@ function ResultsContent() {
               )}
             </div>
 
-            {/* Watch Mode - Video Player */}
+            {/* Watch Mode - Video Player - FIXED with proxy */}
             {watchSource && (
               <div className="bg-black rounded-lg overflow-hidden">
                 <div className="relative">
-                  {watchSource.isM3u8 ? (
-                    <div className="aspect-video flex items-center justify-center bg-gray-900">
-                      <div className="text-center text-white px-4">
-                        <p className="text-sm mb-1 font-medium">HLS Stream</p>
-                        <p className="text-[11px] text-gray-400 mb-3">In-browser HLS not supported. Use an external player.</p>
-                        <a
-                          href={watchSource.url}
-                          target="_blank"
-                          rel="noopener noreferrer"
-                          className="inline-block px-3 py-1.5 bg-blue-600 text-white text-xs rounded hover:bg-blue-700 transition-colors"
-                        >
-                          Open in VLC / Player
-                        </a>
+                  <video
+                    ref={videoRef}
+                    controls
+                    autoPlay
+                    crossOrigin="anonymous"
+                    className="w-full aspect-video bg-black"
+                    playsInline
+                    poster={result.data.thumbnail || undefined}
+                    onError={() => setVideoError('Failed to load video. The source may require authentication or has expired. Try download instead.')}
+                  >
+                    Your browser does not support video playback.
+                  </video>
+                  {videoError && (
+                    <div className="absolute inset-0 flex items-center justify-center bg-black/80 p-4">
+                      <div className="text-center text-white">
+                        <p className="text-sm mb-2 font-medium">Playback error</p>
+                        <p className="text-xs text-gray-300 mb-3 max-w-sm">{videoError}</p>
+                        <div className="flex gap-2 justify-center">
+                          <a
+                            href={getStreamUrl(watchSource.url)}
+                            target="_blank"
+                            rel="noopener noreferrer"
+                            className="inline-block px-3 py-1.5 bg-blue-600 text-white text-xs rounded hover:bg-blue-700"
+                          >
+                            Open Stream
+                          </a>
+                          <button
+                            onClick={() => handleDownload(watchSource, result.data?.fileName || 'video')}
+                            className="inline-block px-3 py-1.5 bg-green-600 text-white text-xs rounded hover:bg-green-700"
+                          >
+                            Download Instead
+                          </button>
+                        </div>
                       </div>
                     </div>
-                  ) : (
-                    <video
-                      controls
-                      autoPlay
-                      className="w-full aspect-video bg-black"
-                      src={watchSource.url}
-                      playsInline
-                      onError={(e) => {
-                        const target = e.target as HTMLVideoElement;
-                        target.poster = '';
-                        // Show error fallback
-                      }}
-                    >
-                      Your browser does not support video playback.
-                    </video>
                   )}
                 </div>
                 <div className="px-3 sm:px-4 py-1.5 sm:py-2 flex items-center justify-between bg-gray-900">
                   <button
-                    onClick={() => setWatchSource(null)}
+                    onClick={() => {
+                      if (hlsRef.current) { hlsRef.current.destroy(); hlsRef.current = null; }
+                      setWatchSource(null);
+                      setVideoError('');
+                    }}
                     className="text-white text-xs hover:text-gray-300 transition-colors flex items-center gap-1"
                   >
                     <svg className="w-3 h-3" viewBox="0 0 24 24" fill="currentColor">
@@ -274,7 +391,7 @@ function ResultsContent() {
                     Back to sources
                   </button>
                   <span className="text-gray-400 text-[10px] sm:text-xs">
-                    {watchSource.quality} · {watchSource.format}
+                    {watchSource.quality} · {watchSource.format} · Proxied
                   </span>
                 </div>
               </div>
@@ -283,14 +400,15 @@ function ResultsContent() {
             {/* Sources / Download Links */}
             <div>
               <h2 className="text-sm font-medium text-gray-700 mb-2 sm:mb-3">
-                Download Links
+                Direct Video Sources
                 {result.data.sources.length > 0 && (
-                  <span className="text-gray-400 font-normal ml-1">({result.data.sources.length})</span>
+                  <span className="text-gray-400 font-normal ml-1">({result.data.sources.length}) · No redirect</span>
                 )}
               </h2>
               {result.data.sources.length === 0 ? (
                 <div className="text-center py-8 bg-gray-50 rounded-lg border border-gray-200">
                   <p className="text-sm text-gray-500">No downloadable sources found.</p>
+                  <p className="text-xs text-gray-400 mt-1">The file may have been removed or is private.</p>
                 </div>
               ) : (
                 <div className="space-y-1.5 sm:space-y-2">
@@ -304,7 +422,6 @@ function ResultsContent() {
                       }`}
                     >
                       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 sm:gap-3">
-                        {/* Source info */}
                         <div className="flex items-center gap-2 sm:gap-3 min-w-0 flex-1">
                           <div className={`w-7 h-7 sm:w-8 sm:h-8 rounded-full flex items-center justify-center flex-shrink-0 ${
                             source.isM3u8 ? 'bg-purple-100' : 'bg-green-100'
@@ -321,14 +438,12 @@ function ResultsContent() {
                           </div>
                           <div className="min-w-0 flex-1">
                             <p className="text-xs sm:text-sm font-medium text-gray-800 truncate">
-                              {source.isM3u8 ? 'HLS Stream' : 'Video File'}
-                              {source.quality !== 'Auto' && ` · ${source.quality}`}
+                              {source.isM3u8 ? 'HLS Stream' : 'MP4 Video (Direct)'} {source.quality !== 'Auto' && `· ${source.quality}`}
                             </p>
-                            <p className="text-[10px] sm:text-xs text-gray-400 truncate">{source.format}</p>
+                            <p className="text-[10px] sm:text-xs text-gray-400 truncate">{source.format} · Direct link (proxied, no redirect)</p>
                           </div>
                         </div>
 
-                        {/* Action buttons */}
                         <div className="flex items-center gap-1.5 sm:gap-2 flex-shrink-0">
                           <button
                             onClick={() => handleCopy(source.url, index)}
@@ -337,9 +452,9 @@ function ResultsContent() {
                                 ? 'bg-green-50 text-green-600 border-green-200'
                                 : 'bg-white text-gray-600 border-gray-200 hover:bg-gray-50 active:bg-gray-100'
                             }`}
-                            aria-label="Copy URL"
+                            aria-label="Copy direct URL"
                           >
-                            {copiedIndex === index ? 'Copied!' : 'Copy'}
+                            {copiedIndex === index ? 'Copied!' : 'Copy Link'}
                           </button>
                           <button
                             onClick={() => setWatchSource(source)}
@@ -351,7 +466,7 @@ function ResultsContent() {
                           <button
                             onClick={() => handleDownload(source, result.data?.fileName || 'video')}
                             className="px-2 sm:px-3 py-1 sm:py-1.5 text-[10px] sm:text-xs font-medium rounded-md bg-[#1a73e8] text-white hover:bg-[#1557b0] active:bg-[#124a8a] transition-colors inline-flex items-center gap-0.5 sm:gap-1"
-                            aria-label="Download video"
+                            aria-label="Download video directly"
                           >
                             <svg className="w-2.5 sm:w-3 h-2.5 sm:h-3" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
                               <path d="M19 9h-4V3H9v6H5l7 7 7-7zM5 18v2h14v-2H5z"/>
@@ -360,21 +475,38 @@ function ResultsContent() {
                           </button>
                         </div>
                       </div>
-                      {/* URL preview - clipped on mobile */}
                       <p className="mt-1.5 sm:mt-2 text-[10px] text-gray-400 truncate" title={source.url}>
                         {source.url}
                       </p>
+                      <div className="mt-1.5 flex gap-2">
+                        <a
+                          href={getStreamUrl(source.url)}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          className="text-[10px] text-blue-500 hover:underline"
+                        >
+                          Stream Link (proxied)
+                        </a>
+                        <a
+                          href={getDownloadUrl(source.url, result.data?.fileName || 'video')}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          className="text-[10px] text-green-600 hover:underline"
+                        >
+                          Download Link (direct, no redirect)
+                        </a>
+                      </div>
                     </div>
                   ))}
                 </div>
               )}
             </div>
 
-            {/* Direct Download Button */}
-            {result.data.downloadUrl && (
-              <div className="pt-1 sm:pt-2">
+            {/* Direct Download Button - FIXED to use proxied direct link */}
+            {result.data.downloadUrl && result.data.sources.length > 0 && (
+              <div className="pt-1 sm:pt-2 flex flex-wrap gap-2">
                 <a
-                  href={result.data.downloadUrl}
+                  href={getDownloadUrl(result.data.downloadUrl, result.data.fileName || 'video.mp4')}
                   target="_blank"
                   rel="noopener noreferrer"
                   className="inline-flex items-center gap-1.5 sm:gap-2 px-3 sm:px-4 py-2 sm:py-2.5 bg-[#34a853] text-white text-xs sm:text-sm font-medium rounded-md hover:bg-[#2d9249] transition-colors active:bg-[#237a3c]"
@@ -382,18 +514,38 @@ function ResultsContent() {
                   <svg className="w-3.5 sm:w-4 h-3.5 sm:h-4" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
                     <path d="M19 9h-4V3H9v6H5l7 7 7-7zM5 18v2h14v-2H5z"/>
                   </svg>
-                  Direct Download from MixDrop
+                  Direct Download (No MixDrop Redirect)
+                </a>
+                <a
+                  href={getStreamUrl(result.data.downloadUrl)}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="inline-flex items-center gap-1.5 sm:gap-2 px-3 sm:px-4 py-2 sm:py-2.5 bg-blue-600 text-white text-xs sm:text-sm font-medium rounded-md hover:bg-blue-700 transition-colors"
+                >
+                  <svg className="w-3.5 sm:w-4 h-3.5 sm:h-4" viewBox="0 0 24 24" fill="currentColor">
+                    <path d="M8 5.14v14l11-7-11-7z"/>
+                  </svg>
+                  Watch Direct (No Redirect)
                 </a>
               </div>
             )}
+
+            <div className="bg-blue-50 border border-blue-100 rounded-lg p-3 mt-4">
+              <h3 className="text-xs font-medium text-blue-800 mb-1">How direct links work (Fixed):</h3>
+              <ul className="text-[11px] text-blue-700 list-disc pl-4 space-y-0.5">
+                <li><strong>Watch</strong> now uses proxied stream <code className="bg-blue-100 px-1 rounded">/api/stream?url=...</code> with proper Referer & CORS headers, so preview works.</li>
+                <li><strong>Download</strong> uses <code className="bg-blue-100 px-1 rounded">/api/download?url=...</code> with Content-Disposition: attachment, so you get file directly, no redirect to MixDrop page.</li>
+                <li>Parser improved to extract any MDCore variable (wurl, furl, vsrc, etc.) and handles base62 packing.</li>
+                <li>HLS (m3u8) manifests are rewritten to proxy segments.</li>
+              </ul>
+            </div>
           </div>
         )}
       </main>
 
-      {/* Footer */}
       <footer className="border-t border-gray-100 mt-8 sm:mt-12">
         <div className="max-w-5xl mx-auto px-4 py-4 sm:py-6 text-center text-xs text-gray-400">
-          <p>Fetchly — Paste any video URL to get download links.</p>
+          <p>Fetchly — Paste any video URL to get direct download links (no MixDrop redirect).</p>
         </div>
       </footer>
     </div>

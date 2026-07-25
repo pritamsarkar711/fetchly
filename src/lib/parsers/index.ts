@@ -1,5 +1,11 @@
 import { VideoInfo, FetchResult } from '../types';
 import { parseMixDrop, isMixDropUrl } from './mixdrop';
+import { parseLuluStream, isLuluStreamUrl } from './lulustream';
+import { parseVidara, isVidaraUrl } from './vidara';
+import { parseFireStream, isFireStreamUrl } from './firestream';
+import { parsePlaymate, isPlaymateUrl } from './playmate';
+import { parseStreamTape, isStreamTapeUrl } from './streamtape';
+import { parseGeneric } from './generic';
 
 /**
  * Detect which site the URL belongs to and return the appropriate parser
@@ -11,12 +17,10 @@ export async function parseUrl(url: string): Promise<FetchResult> {
 
   let normalizedUrl = url.trim();
 
-  // Add https:// if missing
   if (!normalizedUrl.startsWith('http://') && !normalizedUrl.startsWith('https://')) {
     normalizedUrl = 'https://' + normalizedUrl;
   }
 
-  // Validate URL
   try {
     new URL(normalizedUrl);
   } catch {
@@ -26,12 +30,36 @@ export async function parseUrl(url: string): Promise<FetchResult> {
   try {
     let data: VideoInfo | null = null;
 
-    // Try MixDrop parser
     if (isMixDropUrl(normalizedUrl)) {
       data = await parseMixDrop(normalizedUrl);
     }
 
-    // If no parser matched, try generic fetch
+    if (!data && isLuluStreamUrl(normalizedUrl)) {
+      data = await parseLuluStream(normalizedUrl);
+    }
+
+    if (!data && isVidaraUrl(normalizedUrl)) {
+      data = await parseVidara(normalizedUrl);
+    }
+
+    if (!data && isFireStreamUrl(normalizedUrl)) {
+      data = await parseFireStream(normalizedUrl);
+    }
+
+    if (!data && isPlaymateUrl(normalizedUrl)) {
+      data = await parsePlaymate(normalizedUrl);
+    }
+
+    if (!data && isStreamTapeUrl(normalizedUrl)) {
+      data = await parseStreamTape(normalizedUrl);
+    }
+
+    // Generic parser that works for ANY site (mp4, m3u8, webm, etc.)
+    if (!data) {
+      data = await parseGeneric(normalizedUrl);
+    }
+
+    // Last resort: direct video file
     if (!data) {
       data = await genericFetch(normalizedUrl);
     }
@@ -43,7 +71,6 @@ export async function parseUrl(url: string): Promise<FetchResult> {
       };
     }
 
-    // Deduplicate sources by URL
     const seenUrls = new Set<string>();
     data.sources = data.sources.filter(source => {
       const key = source.url.toLowerCase().trim();
@@ -59,6 +86,15 @@ export async function parseUrl(url: string): Promise<FetchResult> {
       };
     }
 
+    // Sort: MP4 first for download, but keep master.m3u8 first for HLS
+    data.sources.sort((a, b) => {
+      const aMaster = a.url.includes('master.m3u8');
+      const bMaster = b.url.includes('master.m3u8');
+      if (aMaster && !bMaster) return -1;
+      if (!aMaster && bMaster) return 1;
+      return 0;
+    });
+
     return { success: true, data };
   } catch (error: any) {
     console.error('Parser error:', error);
@@ -69,9 +105,6 @@ export async function parseUrl(url: string): Promise<FetchResult> {
   }
 }
 
-/**
- * Try to extract video info from any page generically
- */
 async function genericFetch(url: string): Promise<VideoInfo | null> {
   try {
     const controller = new AbortController();
@@ -91,7 +124,6 @@ async function genericFetch(url: string): Promise<VideoInfo | null> {
 
     const contentType = response.headers.get('content-type') || '';
 
-    // If it's a direct video file
     if (contentType.startsWith('video/')) {
       const fileName = url.split('/').pop()?.split('?')[0] || 'video.mp4';
       const isM3u8 = url.includes('.m3u8');
@@ -112,6 +144,28 @@ async function genericFetch(url: string): Promise<VideoInfo | null> {
         originalUrl: url,
         downloadUrl: url,
       };
+    }
+
+    if (contentType.includes('mpegurl') || url.includes('.m3u8')) {
+      const text = await response.text();
+      if (text.includes('#EXTM3U')) {
+        const fileName = url.split('/').pop()?.split('?')[0] || 'video.m3u8';
+        return {
+          title: fileName,
+          fileName: fileName.replace('.m3u8', '.mp4'),
+          fileSize: 'Unknown',
+          fileSizeBytes: 0,
+          thumbnail: '',
+          sources: [{
+            url,
+            quality: 'Auto',
+            format: 'HLS (m3u8)',
+            isM3u8: true,
+          }],
+          originalUrl: url,
+          downloadUrl: url,
+        };
+      }
     }
 
     return null;

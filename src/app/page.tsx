@@ -21,7 +21,6 @@ export default function Home() {
       return false;
     }
     const trimmed = url.trim();
-    // Basic URL validation
     try {
       const hasProtocol = trimmed.startsWith('http://') || trimmed.startsWith('https://');
       const urlObj = new URL(hasProtocol ? trimmed : 'https://' + trimmed);
@@ -51,28 +50,9 @@ export default function Home() {
   };
 
   return (
-    <div className="flex flex-col min-h-screen">
-      {/* Header */}
-      <header className="flex items-center justify-end px-4 sm:px-6 py-2 sm:py-3 gap-3 sm:gap-4">
-        <div className="flex items-center gap-3 sm:gap-4">
-          <a href="#" className="text-sm text-[#1a0dab] hover:underline hidden sm:inline">Gmail</a>
-          <a href="#" className="text-sm text-[#1a0dab] hover:underline hidden sm:inline">Images</a>
-          <button
-            className="w-8 h-8 rounded-full bg-gray-100 flex items-center justify-center hover:bg-gray-200 transition-colors"
-            aria-label="Menu"
-          >
-            <svg width="16" height="16" viewBox="0 0 24 24" fill="#5f6368">
-              <path d="M12,8c1.1,0,2-0.9,2-2s-0.9-2-2-2s-2,0.9-2,2S10.9,8,12,8z M12,10c-1.1,0-2,0.9-2,2s0.9,2,2,2s2-0.9,2-2 S13.1,10,12,10z M12,16c-1.1,0-2,0.9-2,2s0.9,2,2,2s2-0.9,2-2S13.1,16,12,16z"/>
-            </svg>
-          </button>
-          <button className="bg-[#1a73e8] text-white text-sm px-4 sm:px-5 py-2 rounded-md hover:bg-[#1557b0] transition-colors font-medium">
-            Sign in
-          </button>
-        </div>
-      </header>
-
-      {/* Main content */}
-      <main className="flex-1 flex flex-col items-center justify-center px-4 sm:-mt-20">
+    <div className="flex flex-col min-h-screen bg-white">
+      {/* Main content - clean, no Google-like header/footer */}
+      <main className="flex-1 flex flex-col items-center justify-center px-4">
         {/* Logo */}
         <div className="mb-5 sm:mb-6">
           <div className="flex items-center gap-0">
@@ -147,29 +127,16 @@ export default function Home() {
           <p className="text-xs text-gray-500 mb-2">Supported sites</p>
           <div className="flex flex-wrap items-center justify-center gap-2 sm:gap-3">
             <span className="text-xs text-gray-600 bg-gray-50 px-2.5 sm:px-3 py-1 rounded-full border border-gray-100">MixDrop</span>
+            <span className="text-xs text-gray-600 bg-purple-50 px-2.5 sm:px-3 py-1 rounded-full border border-purple-100">LuluStream</span>
+            <span className="text-xs text-gray-600 bg-gray-50 px-2.5 sm:px-3 py-1 rounded-full border border-gray-100">LuluVdo</span>
+            <span className="text-xs text-gray-600 bg-blue-50 px-2.5 sm:px-3 py-1 rounded-full border border-blue-100">Vidara</span>
+            <span className="text-xs text-gray-600 bg-orange-50 px-2.5 sm:px-3 py-1 rounded-full border border-orange-100">FireStream</span>
+            <span className="text-xs text-gray-600 bg-pink-50 px-2.5 sm:px-3 py-1 rounded-full border border-pink-100">Playmate</span>
+            <span className="text-xs text-gray-600 bg-red-50 px-2.5 sm:px-3 py-1 rounded-full border border-red-100">StreamTape</span>
             <span className="text-xs text-gray-400 bg-gray-50 px-2.5 sm:px-3 py-1 rounded-full border border-gray-100">Direct URLs</span>
           </div>
         </div>
       </main>
-
-      {/* Footer */}
-      <footer className="bg-[#f2f2f2] text-xs sm:text-sm text-gray-600">
-        <div className="px-4 sm:px-8 py-2.5 sm:py-3 border-b border-gray-200">
-          <span>United States</span>
-        </div>
-        <div className="flex flex-col sm:flex-row items-center justify-between px-4 sm:px-8 py-2 sm:py-3 gap-2 sm:gap-0">
-          <div className="flex gap-4 sm:gap-6">
-            <a href="#" className="hover:underline">About</a>
-            <a href="#" className="hover:underline">Advertising</a>
-            <a href="#" className="hover:underline">Business</a>
-          </div>
-          <div className="flex gap-4 sm:gap-6">
-            <a href="#" className="hover:underline">Privacy</a>
-            <a href="#" className="hover:underline">Terms</a>
-            <a href="#" className="hover:underline">Settings</a>
-          </div>
-        </div>
-      </footer>
     </div>
   );
 }
