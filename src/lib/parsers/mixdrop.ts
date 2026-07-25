@@ -1,6 +1,8 @@
+/* eslint-disable @typescript-eslint/no-explicit-any */
 import * as cheerio from 'cheerio';
 import { VideoInfo, VideoSource } from '../types';
-import { detectPacked, unpackPacked, unpackAllLayers } from './unpacker';
+import { fetchPublicUrl, readResponseText } from '../proxy-utils';
+import { detectPacked, unpackAllLayers } from './unpacker';
 
 const MIXDROP_DOMAINS = [
   'mixdrop.co', 'mixdrop.to', 'mixdrop.sx', 'mixdrop.bz',
@@ -13,15 +15,6 @@ const MIXDROP_DOMAINS = [
   'mixdrop.de', 'mixdrop.li', 'mixdrop.lt', 'mixdrop.tv',
   'mixdrop.tk', 'mixdrop.ga', 'mixdrop.gq', 'mixdrop.ml',
   'mixdrop.cf',
-];
-
-// Allow mxcontent domains for direct video
-const VIDEO_CDN_DOMAINS = [
-  'mxcontent.net',
-  'mxdcontent.net',
-  'mxdrop',
-  'mixdrop',
-  'mixdrop',
 ];
 
 const FETCH_TIMEOUT = 12_000;
@@ -54,7 +47,7 @@ async function fetchWithFallback(url: string): Promise<Response> {
   const timeout = setTimeout(() => controller.abort(), FETCH_TIMEOUT);
 
   try {
-    const response = await fetch(url, {
+    const response = await fetchPublicUrl(url, {
       signal: controller.signal,
       headers: {
         'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36',
@@ -63,7 +56,6 @@ async function fetchWithFallback(url: string): Promise<Response> {
         'Referer': `${new URL(url).origin}/`,
         'Cache-Control': 'no-cache',
       },
-      redirect: 'follow',
     });
     if (!response.ok) throw new Error(`Source returned ${response.status}`);
     return response;
@@ -116,7 +108,7 @@ function extractFromUnpackedCode(code: string): VideoSource[] {
 
   // First, collect MDCore urls
   const mdcoreUrls = extractMDCoreUrls(code);
-  for (let raw of mdcoreUrls) {
+  for (const raw of mdcoreUrls) {
     let url = raw.trim();
     if (url.startsWith('//')) url = 'https:' + url;
     else if (!url.startsWith('http')) {
@@ -213,12 +205,9 @@ function processScripts($: cheerio.CheerioAPI): VideoSource[] {
       if (processedHashes.has(hash)) return;
       processedHashes.add(hash);
 
-      let workingText = trimmed;
-
       if (trimmed.includes('eval(function') || trimmed.includes('function(p,a,c,k,e,')) {
         const unpacked = unpackJs(trimmed);
         if (unpacked) {
-          workingText = unpacked;
           const sources = extractFromUnpackedCode(unpacked);
           allSources.push(...sources);
           // Also try extracting any direct video urls from unpacked text
@@ -477,12 +466,12 @@ export async function parseMixDrop(url: string): Promise<VideoInfo | null> {
   if (url.includes('/e/')) variants.add(url.replace('/e/', '/f/'));
 
   let lastError: any = null;
-  let bestResult: VideoInfo | null = null;
+  const bestResult: VideoInfo | null = null;
 
   for (const variantUrl of variants) {
     try {
       const response = await fetchWithFallback(variantUrl);
-      const html = await response.text();
+      const html = await readResponseText(response, 2_000_000);
       if (!html || html.length < 100) {
         throw new Error('Empty or invalid response from MixDrop');
       }

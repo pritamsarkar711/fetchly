@@ -1,5 +1,7 @@
+/* eslint-disable @typescript-eslint/no-explicit-any */
 import * as cheerio from 'cheerio';
 import { VideoInfo, VideoSource } from '../types';
+import { fetchPublicUrl, readResponseText } from '../proxy-utils';
 import { detectPacked, unpackAllLayers } from './unpacker';
 
 const FETCH_TIMEOUT = 12_000;
@@ -10,7 +12,7 @@ async function fetchWithFallback(url: string, referer?: string): Promise<Respons
 
   try {
     const ref = referer || url;
-    const response = await fetch(url, {
+    const response = await fetchPublicUrl(url, {
       signal: controller.signal,
       headers: {
         'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36',
@@ -19,7 +21,6 @@ async function fetchWithFallback(url: string, referer?: string): Promise<Respons
         'Referer': ref,
         'Cache-Control': 'no-cache',
       },
-      redirect: 'follow',
     });
     if (!response.ok) throw new Error(`Source returned ${response.status}`);
     return response;
@@ -126,7 +127,7 @@ function extractVideoSourcesFromHtml($: cheerio.CheerioAPI, html: string, baseUr
 
   const addSource = (rawUrl: string, quality = 'HD', format?: string) => {
     if (!rawUrl) return;
-    let url = normalizeUrl(rawUrl, baseUrl);
+    const url = normalizeUrl(rawUrl, baseUrl);
     if (!url || !url.startsWith('http')) return;
     // Filter out obviously non-video
     const lower = url.toLowerCase();
@@ -152,9 +153,6 @@ function extractVideoSourcesFromHtml($: cheerio.CheerioAPI, html: string, baseUr
     const $video = $(videoEl);
     const src = $video.attr('src');
     if (src) addSource(src);
-    const poster = $video.attr('poster');
-    // poster not video but ignore
-
     $video.find('source').each((_: number, sourceEl: any) => {
       const $source = $(sourceEl);
       const srcUrl = $source.attr('src');
@@ -311,7 +309,7 @@ async function tryIframeExtraction($: cheerio.CheerioAPI, baseUrl: string, depth
   $('iframe').each((_: number, el: any) => {
     const src = $(el).attr('src');
     if (src) {
-      let normalized = normalizeUrl(src, baseUrl);
+      const normalized = normalizeUrl(src, baseUrl);
       if (normalized.startsWith('http') && !normalized.includes('google') && !normalized.includes('facebook') && !normalized.includes('twitter') && !normalized.includes('recaptcha')) {
         iframes.push(normalized);
       }
@@ -322,7 +320,7 @@ async function tryIframeExtraction($: cheerio.CheerioAPI, baseUrl: string, depth
   for (const iframeUrl of iframes.slice(0, 2)) {
     try {
       const res = await fetchWithFallback(iframeUrl, baseUrl);
-      const html = await res.text();
+      const html = await readResponseText(res, 2_000_000);
       if (!html) continue;
       const $inner = cheerio.load(html);
       const innerSources = extractVideoSourcesFromHtml($inner, html, iframeUrl);
@@ -372,7 +370,7 @@ export async function parseGeneric(url: string): Promise<VideoInfo | null> {
       };
     }
 
-    const html = await response.text();
+    const html = await readResponseText(response, 2_000_000);
     if (!html) return null;
 
     if (html.trimStart().startsWith('#EXTM3U')) {

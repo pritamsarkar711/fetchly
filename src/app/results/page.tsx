@@ -72,7 +72,9 @@ function ResultsContent() {
   }, []);
 
   useEffect(() => {
-    if (url) fetchVideo(url);
+    if (!url) return;
+    const timer = window.setTimeout(() => fetchVideo(url), 0);
+    return () => window.clearTimeout(timer);
   }, [url, fetchVideo]);
 
   useEffect(() => {
@@ -202,7 +204,11 @@ function ResultsContent() {
                 <h1 className="min-w-0 flex-1 truncate text-sm font-medium text-gray-900" title={result.data.fileName || result.data.title}>{result.data.fileName || result.data.title}</h1>
                 {result.data.fileSize && result.data.fileSize !== 'Unknown' && <span className="text-xs text-gray-400">{result.data.fileSize}</span>}
               </div>
-              {result.data.thumbnail && !watching && <img src={result.data.thumbnail} alt="Video thumbnail" className="max-h-64 w-full object-cover" onError={(event) => { event.currentTarget.style.display = 'none'; }} />}
+              {result.data.thumbnail && !watching && (
+                // Native image avoids routing untrusted thumbnails through an image optimizer.
+                // eslint-disable-next-line @next/next/no-img-element
+                <img src={result.data.thumbnail} alt="Video thumbnail" className="max-h-64 w-full object-cover" onError={(event) => { event.currentTarget.style.display = 'none'; }} />
+              )}
             </section>
 
             {watching && (
@@ -220,7 +226,7 @@ function ResultsContent() {
                 <div key={`${source.url}-${index}`} className={`flex flex-wrap items-center justify-between gap-3 rounded-xl border px-3 py-3 ${watching?.url === source.url ? 'border-blue-300 bg-blue-50/30' : 'border-gray-200'}`}>
                   <div className="flex items-center gap-2">
                     <span className={`h-2 w-2 rounded-full ${source.isM3u8 ? 'bg-purple-500' : 'bg-green-500'}`} />
-                    <span className="text-sm font-medium text-gray-800">{source.isM3u8 ? 'HLS stream' : 'Video file'}</span>
+                    <span className="text-sm font-medium text-gray-800">{source.isM3u8 ? `${source.quality && source.quality !== 'Auto' && !/hls/i.test(source.quality) ? `${source.quality} ` : ''}HLS` : 'Video file'}</span>
                   </div>
                   <div className="flex items-center gap-2">
                     <button onClick={() => copy(source, index)} className="rounded-md border border-gray-200 px-3 py-1.5 text-xs font-medium text-gray-600 hover:bg-gray-50">{copied === index ? 'Copied' : 'Copy'}</button>

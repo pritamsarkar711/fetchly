@@ -1,12 +1,12 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { buildCorsHeaders, getHeadersForUrl, sanitizeFilename, validateProxyUrl } from '@/lib/proxy-utils';
+import { buildCorsHeaders, fetchPublicUrl, getHeadersForUrl, sanitizeFilename, validateProxyUrl } from '@/lib/proxy-utils';
+import { takeRateLimit } from '@/lib/rate-limit';
 
 export const dynamic = 'force-dynamic';
 export const runtime = 'nodejs';
 export const maxDuration = 60;
 
 const HEADER_TIMEOUT = 25_000;
-const REDIRECT_STATUSES = new Set([301, 302, 303, 307, 308]);
 
 class UpstreamTimeoutError extends Error {
   constructor() {
@@ -21,34 +21,21 @@ async function fetchUpstream(
   range?: string | null,
   method: 'GET' | 'HEAD' = 'GET',
 ): Promise<Response> {
-  let currentUrl = url;
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), HEADER_TIMEOUT);
+  const headers = getHeadersForUrl(url, referrer);
+  if (range && method === 'GET') headers.Range = range;
 
-  for (let redirects = 0; redirects < 5; redirects += 1) {
-    const controller = new AbortController();
-    const timer = setTimeout(() => controller.abort(), HEADER_TIMEOUT);
-    const headers = getHeadersForUrl(currentUrl, referrer);
-    if (range && method === 'GET') headers.Range = range;
-
-    let response: Response;
-    try {
-      response = await fetch(currentUrl, { method, headers, redirect: 'manual', signal: controller.signal });
-    } catch (error: unknown) {
-      if (controller.signal.aborted) throw new UpstreamTimeoutError();
-      throw error;
-    } finally {
-      // Do not abort a response body after headers arrive: this previously
-      // cut off larger files and appeared to browsers as an unknown failure.
-      clearTimeout(timer);
-    }
-
-    if (!REDIRECT_STATUSES.has(response.status)) return response;
-    const location = response.headers.get('location');
-    const nextUrl = location ? validateProxyUrl(new URL(location, currentUrl).toString()) : null;
-    if (!nextUrl) throw new Error('Unsafe or invalid redirect from source');
-    currentUrl = nextUrl;
+  try {
+    return await fetchPublicUrl(url, { method, headers, signal: controller.signal });
+  } catch (error: unknown) {
+    if (controller.signal.aborted) throw new UpstreamTimeoutError();
+    throw error;
+  } finally {
+    // Do not abort a response body after headers arrive: this previously
+    // cut off larger files and appeared to browsers as an unknown failure.
+    clearTimeout(timer);
   }
-
-  throw new Error('Too many redirects from source');
 }
 
 function responseHeaders(upstream: Response, filename: string): Headers {
@@ -73,6 +60,11 @@ function responseHeaders(upstream: Response, filename: string): Headers {
 }
 
 export async function GET(request: NextRequest) {
+  const rate = takeRateLimit(request, 'download', 60, 60_000);
+  if (!rate.allowed) {
+    return NextResponse.json({ error: 'Too many requests' }, { status: 429, headers: new Headers({ 'Retry-After': String(rate.retryAfter) }) });
+  }
+
   const sourceUrl = validateProxyUrl(request.nextUrl.searchParams.get('url'));
   const referrer = validateProxyUrl(request.nextUrl.searchParams.get('ref'));
   const filename = sanitizeFilename(request.nextUrl.searchParams.get('filename') || request.nextUrl.searchParams.get('title'), 'video.mp4');
@@ -104,6 +96,9 @@ export async function OPTIONS() {
 }
 
 export async function HEAD(request: NextRequest) {
+  const rate = takeRateLimit(request, 'download', 60, 60_000);
+  if (!rate.allowed) return new NextResponse(null, { status: 429, headers: new Headers({ 'Retry-After': String(rate.retryAfter) }) });
+
   const sourceUrl = validateProxyUrl(request.nextUrl.searchParams.get('url'));
   const referrer = validateProxyUrl(request.nextUrl.searchParams.get('ref'));
   const filename = sanitizeFilename(request.nextUrl.searchParams.get('filename'), 'video.mp4');

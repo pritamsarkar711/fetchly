@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useRef, useEffect, FormEvent, KeyboardEvent } from 'react';
+import { useState, useRef, useEffect, FormEvent } from 'react';
 import { useRouter } from 'next/navigation';
 
 export default function Home() {
@@ -43,12 +43,6 @@ export default function Home() {
     router.push(`/results?url=${encodeURIComponent(url)}`);
   };
 
-  const handleKeyDown = (e: KeyboardEvent<HTMLInputElement>) => {
-    if (e.key === 'Enter') {
-      handleSubmit(e as any);
-    }
-  };
-
   return (
     <div className="flex flex-col min-h-screen bg-white">
       {/* Main content - clean, no Google-like header/footer */}
@@ -79,7 +73,6 @@ export default function Home() {
                 type="text"
                 value={query}
                 onChange={(e) => { setQuery(e.target.value); if (error) setError(''); }}
-                onKeyDown={handleKeyDown}
                 placeholder="Paste video URL..."
                 className="flex-1 outline-none text-base bg-transparent text-gray-800 placeholder-gray-400 min-w-0"
                 autoComplete="off"

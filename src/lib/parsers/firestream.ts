@@ -1,5 +1,7 @@
+/* eslint-disable @typescript-eslint/no-explicit-any */
 import * as cheerio from 'cheerio';
 import { VideoInfo, VideoSource } from '../types';
+import { fetchPublicUrl, readResponseText } from '../proxy-utils';
 import { detectPacked, unpackAllLayers } from './unpacker';
 
 const FIRESTREAM_DOMAINS = [
@@ -45,7 +47,7 @@ async function fetchWithFallback(url: string): Promise<Response> {
   const timeout = setTimeout(() => controller.abort(), FETCH_TIMEOUT);
 
   try {
-    const response = await fetch(url, {
+    const response = await fetchPublicUrl(url, {
       signal: controller.signal,
       headers: {
         'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36',
@@ -54,7 +56,6 @@ async function fetchWithFallback(url: string): Promise<Response> {
         'Referer': `${new URL(url).origin}/`,
         'Cache-Control': 'no-cache',
       },
-      redirect: 'follow',
     });
     if (!response.ok) throw new Error(`Source returned ${response.status}`);
     return response;
@@ -82,12 +83,11 @@ async function postApiResolve(apiUrl: string, blob: string, host: string): Promi
 
   try {
     const body = `blob=${encodeURIComponent(blob)}`;
-    const response = await fetch(apiUrl, {
+    const response = await fetchPublicUrl(apiUrl, {
       method: 'POST',
       signal: controller.signal,
       headers,
       body,
-      redirect: 'follow',
     });
     clearTimeout(timeout);
     return response;
@@ -214,7 +214,7 @@ export async function parseFireStream(url: string): Promise<VideoInfo | null> {
 
   try {
     const response = await fetchWithFallback(webUrl);
-    const html = await response.text();
+    const html = await readResponseText(response, 2_000_000);
     if (!html || html.length < 100) throw new Error('Empty response from FireStream');
 
     // Do not treat a phrase in a shared page template as conclusive. Some
@@ -240,7 +240,8 @@ export async function parseFireStream(url: string): Promise<VideoInfo | null> {
     if (blob) {
       try {
         const apiResponse = await postApiResolve(apiUrl, blob, host);
-        const apiText = await apiResponse.text();
+        const apiText = await readResponseText(apiResponse);
+        if (!apiText) throw new Error('Empty FireStream resolver response');
 
         // Try JSON parse
         try {

@@ -1,16 +1,22 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { parseUrl } from '@/lib/parsers';
-import { validateProxyUrl } from '@/lib/proxy-utils';
+import { validatePublicUrl } from '@/lib/proxy-utils';
+import { takeRateLimit } from '@/lib/rate-limit';
 
-function validateUrl(input: string | null): string | null {
+async function validateUrl(input: string | null): Promise<string | null> {
   if (!input || typeof input !== 'string') return null;
   const trimmed = input.trim();
   const normalized = /^https?:\/\//i.test(trimmed) ? trimmed : `https://${trimmed}`;
-  return normalized.length <= 2000 ? validateProxyUrl(normalized, 2000) : null;
+  return normalized.length <= 2000 ? validatePublicUrl(normalized, 2000) : null;
 }
 
-async function resolve(url: string | null) {
-  const validated = validateUrl(url);
+async function resolve(request: NextRequest, url: string | null) {
+  const rate = takeRateLimit(request, 'fetch', 20, 60_000);
+  if (!rate.allowed) {
+    return NextResponse.json({ success: false, error: 'Too many requests. Try again shortly.' }, { status: 429, headers: { 'Retry-After': String(rate.retryAfter) } });
+  }
+
+  const validated = await validateUrl(url);
   if (!validated) {
     return NextResponse.json({ success: false, error: 'Enter a valid URL.' }, { status: 400 });
   }
@@ -27,9 +33,9 @@ async function resolve(url: string | null) {
 export async function POST(request: NextRequest) {
   const body: unknown = await request.json().catch(() => null);
   const url = typeof body === 'object' && body !== null && 'url' in body && typeof body.url === 'string' ? body.url : null;
-  return resolve(url);
+  return resolve(request, url);
 }
 
 export async function GET(request: NextRequest) {
-  return resolve(request.nextUrl.searchParams.get('url'));
+  return resolve(request, request.nextUrl.searchParams.get('url'));
 }

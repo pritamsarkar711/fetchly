@@ -1,5 +1,7 @@
+/* eslint-disable @typescript-eslint/no-explicit-any */
 import * as cheerio from 'cheerio';
 import { VideoInfo, VideoSource } from '../types';
+import { fetchPublicUrl, readResponseText } from '../proxy-utils';
 import { detectPacked, unpackAllLayers } from './unpacker';
 
 const LULUSTREAM_DOMAINS = [
@@ -57,7 +59,7 @@ async function fetchWithFallback(url: string): Promise<Response> {
   const timeout = setTimeout(() => controller.abort(), FETCH_TIMEOUT);
 
   try {
-    const response = await fetch(url, {
+    const response = await fetchPublicUrl(url, {
       signal: controller.signal,
       headers: {
         'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36',
@@ -66,7 +68,6 @@ async function fetchWithFallback(url: string): Promise<Response> {
         'Referer': `${new URL(url).origin}/`,
         'Cache-Control': 'no-cache',
       },
-      redirect: 'follow',
     });
     if (!response.ok) throw new Error(`Source returned ${response.status}`);
     return response;
@@ -329,7 +330,7 @@ export async function parseLuluStream(url: string): Promise<VideoInfo | null> {
   for (const variantUrl of variants) {
     try {
       const response = await fetchWithFallback(variantUrl);
-      const html = await response.text();
+      const html = await readResponseText(response, 2_000_000);
       if (!html || html.length < 200) throw new Error('Empty response from LuluStream');
 
       if (html.includes('WE ARE SORRY') || html.includes('File Not Found') || html.includes('404 Not Found') || html.toLowerCase().includes('file was deleted') || html.toLowerCase().includes('file not found')) {

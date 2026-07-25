@@ -1,5 +1,7 @@
+/* eslint-disable @typescript-eslint/no-explicit-any */
 import * as cheerio from 'cheerio';
 import { VideoInfo, VideoSource } from '../types';
+import { fetchPublicUrl, readResponseText } from '../proxy-utils';
 
 const STREAMTAPE_DOMAINS = [
   'streamtape.com',
@@ -65,7 +67,7 @@ async function fetchWithFallback(url: string): Promise<Response> {
   const timeout = setTimeout(() => controller.abort(), FETCH_TIMEOUT);
 
   try {
-    const response = await fetch(url, {
+    const response = await fetchPublicUrl(url, {
       signal: controller.signal,
       headers: {
         'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36',
@@ -74,7 +76,6 @@ async function fetchWithFallback(url: string): Promise<Response> {
         'Referer': `${new URL(url).origin}/`,
         'Cache-Control': 'no-cache',
       },
-      redirect: 'follow',
     });
     if (!response.ok) throw new Error(`Source returned ${response.status}`);
     return response;
@@ -113,14 +114,9 @@ function deduplicateSources(sources: VideoSource[]): VideoSource[] {
  */
 function extractByIdMethod(html: string): string | null {
   try {
-    // Find ById pattern
-    const byIdRegex = /ById\([^)]*?=\s*(["']\/\/[^;<]+)/g;
-    // More permissive version from resolver: ById\('.+?=\s*(["']//[^;<]+)
-    const regex = /ById\(.*?=\s*(["']\/\/[\s\S][^;<]+)/g;
-    let match: RegExpExecArray | null;
     let lastMatch: string | null = null;
 
-    // Try both regexes
+    // Try common StreamTape markup patterns
     const patterns = [
       /ById\(.*?=\s*(["']\/\/[\s\S][^;<]+)/g,
       /getElementById\(.*?\.innerHTML\s*=\s*(["']\/\/[^;<]+)/g,
@@ -188,7 +184,7 @@ function extractByIdMethod(html: string): string | null {
       // Extract string inside quotes: "([^"]*)"
       const p1Match = part.match(/"([^"]*)"/);
       if (!p1Match) continue;
-      let p1 = p1Match[1];
+      const p1 = p1Match[1];
       let p2 = 0;
       if (part.includes('substring')) {
         const subRegex = /substring\((\d+)\)/g;
@@ -368,7 +364,7 @@ export async function parseStreamTape(url: string): Promise<VideoInfo | null> {
   for (const variantUrl of variants) {
     try {
       const response = await fetchWithFallback(variantUrl);
-      const html = await response.text();
+      const html = await readResponseText(response, 2_000_000);
       if (!html || html.length < 200) throw new Error('Empty response from StreamTape');
 
       const lowerHtml = html.toLowerCase();

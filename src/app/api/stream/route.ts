@@ -1,12 +1,12 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { buildCorsHeaders, getHeadersForUrl, isLikelyHlsUrl, validateProxyUrl } from '@/lib/proxy-utils';
+import { buildCorsHeaders, fetchPublicUrl, getHeadersForUrl, isLikelyHlsUrl, readResponseText, validateProxyUrl } from '@/lib/proxy-utils';
+import { takeRateLimit } from '@/lib/rate-limit';
 
 export const dynamic = 'force-dynamic';
 export const runtime = 'nodejs';
 export const maxDuration = 60;
 
 const HEADER_TIMEOUT = 25_000;
-const REDIRECT_STATUSES = new Set([301, 302, 303, 307, 308]);
 
 class UpstreamTimeoutError extends Error {
   constructor() {
@@ -22,40 +22,22 @@ async function fetchUpstream(
   allowRange = true,
   method: 'GET' | 'HEAD' = 'GET',
 ): Promise<Response> {
-  let currentUrl = url;
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), HEADER_TIMEOUT);
+  const headers = getHeadersForUrl(url, referrer);
+  if (range && allowRange) headers.Range = range;
 
-  for (let redirects = 0; redirects < 5; redirects += 1) {
-    const controller = new AbortController();
-    const timer = setTimeout(() => controller.abort(), HEADER_TIMEOUT);
-    const headers = getHeadersForUrl(currentUrl, referrer);
-    if (range && allowRange) headers.Range = range;
-
-    let response: Response;
-    try {
-      response = await fetch(currentUrl, {
-        method,
-        headers,
-        redirect: 'manual',
-        signal: controller.signal,
-      });
-    } catch (error: unknown) {
-      if (controller.signal.aborted) throw new UpstreamTimeoutError();
-      throw error;
-    } finally {
-      // The timeout protects time-to-first-byte only. Keeping it alive aborts
-      // legitimate long downloads after 25 seconds.
-      clearTimeout(timer);
-    }
-
-    if (!REDIRECT_STATUSES.has(response.status)) return response;
-
-    const location = response.headers.get('location');
-    const nextUrl = location ? validateProxyUrl(new URL(location, currentUrl).toString()) : null;
-    if (!nextUrl) throw new Error('Unsafe or invalid redirect from source');
-    currentUrl = nextUrl;
+  try {
+    // fetchPublicUrl resolves and validates each redirect before requesting it.
+    return await fetchPublicUrl(url, { method, headers, signal: controller.signal });
+  } catch (error: unknown) {
+    if (controller.signal.aborted) throw new UpstreamTimeoutError();
+    throw error;
+  } finally {
+    // The timeout protects time-to-first-byte only. Keeping it alive aborts
+    // legitimate long downloads after the connection has been established.
+    clearTimeout(timer);
   }
-
-  throw new Error('Too many redirects from source');
 }
 
 function isM3U8(contentType: string | null, sourceUrl: string, content?: string): boolean {
@@ -118,6 +100,11 @@ function proxyHeaders(upstream: Response, disposition: 'inline' | 'attachment' =
 }
 
 async function handleProxy(request: NextRequest) {
+  const rate = takeRateLimit(request, 'stream', 360, 60_000);
+  if (!rate.allowed) {
+    return NextResponse.json({ error: 'Too many requests' }, { status: 429, headers: new Headers({ 'Retry-After': String(rate.retryAfter) }) });
+  }
+
   const sourceUrl = validateProxyUrl(request.nextUrl.searchParams.get('url'));
   const referrer = validateProxyUrl(request.nextUrl.searchParams.get('ref'));
 
@@ -138,10 +125,13 @@ async function handleProxy(request: NextRequest) {
     // Some hosts serve an HLS playlist as .txt or text/plain. Detect the
     // playlist itself rather than relying on the extension alone.
     if (isM3U8(contentType, sourceUrl)) {
-      manifest = await upstream.text();
+      manifest = await readResponseText(upstream);
+      if (manifest === null) {
+        return NextResponse.json({ error: 'HLS playlist is too large or invalid' }, { status: 502, headers: buildCorsHeaders() });
+      }
     } else if ((contentType || '').toLowerCase().startsWith('text/')) {
-      const candidate = await upstream.clone().text();
-      if (candidate.trimStart().startsWith('#EXTM3U')) manifest = candidate;
+      const candidate = await readResponseText(upstream.clone());
+      if (candidate?.trimStart().startsWith('#EXTM3U')) manifest = candidate;
     }
 
     if (manifest !== null && manifest.trimStart().startsWith('#EXTM3U')) {
@@ -178,6 +168,9 @@ export async function OPTIONS() {
 }
 
 export async function HEAD(request: NextRequest) {
+  const rate = takeRateLimit(request, 'stream', 360, 60_000);
+  if (!rate.allowed) return new NextResponse(null, { status: 429, headers: new Headers({ 'Retry-After': String(rate.retryAfter) }) });
+
   const sourceUrl = validateProxyUrl(request.nextUrl.searchParams.get('url'));
   const referrer = validateProxyUrl(request.nextUrl.searchParams.get('ref'));
   if (!sourceUrl) return NextResponse.json({ error: 'Invalid video URL' }, { status: 400, headers: buildCorsHeaders() });

@@ -12,20 +12,26 @@
     "cheerio": "^1.2.0",
     "hls.js": "^1.6.16",
     "next": "16.2.11",
-    "react": "19.2.4",
-    "react-dom": "19.2.4"
+    "react": "19.2.8",
+    "react-dom": "19.2.8"
   },
   "devDependencies": {
     "@tailwindcss/postcss": "^4",
     "@types/node": "^20",
     "@types/react": "^19",
     "@types/react-dom": "^19",
-    "eslint": "^9",
+    "eslint": "^9.39.5",
     "eslint-config-next": "16.2.11",
     "tailwindcss": "^4",
     "typescript": "^5"
   },
   "engines": {
     "node": ">=18.0.0"
+  },
+  "overrides": {
+    "sharp": "0.35.3",
+    "postcss": "8.5.23",
+    "minimatch": "10.2.5",
+    "brace-expansion": "5.0.8"
   }
 }

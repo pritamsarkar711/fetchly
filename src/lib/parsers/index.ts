@@ -5,7 +5,9 @@ import { parseVidara, isVidaraUrl } from './vidara';
 import { parseFireStream, isFireStreamUrl } from './firestream';
 import { parsePlaymate, isPlaymateUrl } from './playmate';
 import { parseStreamTape, isStreamTapeUrl } from './streamtape';
+import { parseDoodStream, isDoodStreamUrl } from './doodstream';
 import { parseGeneric } from './generic';
+import { fetchPublicUrl, getHeadersForUrl, readResponseText } from '../proxy-utils';
 
 const VIDEO_EXTENSIONS = /\.(?:mp4|m4v|webm|mov|mkv|avi|ogv)(?:$|[?#])/i;
 const HLS_EXTENSION = /\.m3u8(?:$|[?#])/i;
@@ -54,7 +56,7 @@ function directVideo(url: string): VideoInfo {
       quality: isM3u8 ? 'HLS' : 'Direct',
       format: isM3u8 ? 'HLS' : 'Video',
       isM3u8,
-      referer: directReferrer(url),
+      referer: referrerOrigin(directReferrer(url)),
     }],
     originalUrl: url,
     downloadUrl: url,
@@ -63,6 +65,15 @@ function directVideo(url: string): VideoInfo {
 
 function sourceKey(source: VideoSource): string {
   return source.url.trim().toLowerCase();
+}
+
+function referrerOrigin(value: string): string {
+  try {
+    const parsed = new URL(value);
+    return `${parsed.protocol}//${parsed.host}/`;
+  } catch {
+    return value;
+  }
 }
 
 function isHlsSource(source: VideoSource): boolean {
@@ -101,6 +112,61 @@ async function attemptParser(
   }
 }
 
+function hlsQuality(attributes: string): string {
+  const resolution = attributes.match(/(?:^|,)RESOLUTION=\d+x(\d+)(?:,|$)/i)?.[1];
+  if (resolution) return `${resolution}p`;
+  const bandwidth = Number.parseInt(attributes.match(/(?:^|,)BANDWIDTH=(\d+)/i)?.[1] || '0', 10);
+  return bandwidth > 0 ? `${Math.round(bandwidth / 1000)} kbps` : 'Auto';
+}
+
+async function expandHlsVariants(sources: VideoSource[]): Promise<VideoSource[]> {
+  const expanded: VideoSource[] = [];
+  const seen = new Set(sources.map(source => source.url));
+  let inspected = 0;
+
+  for (const source of sources) {
+    expanded.push(source);
+    if (!isHlsSource(source) || inspected >= 2) continue;
+    inspected += 1;
+
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), 6_000);
+    try {
+      const response = await fetchPublicUrl(source.url, {
+        headers: getHeadersForUrl(source.url, source.referer),
+        signal: controller.signal,
+      });
+      if (!response.ok) continue;
+      const manifest = await readResponseText(response);
+      if (!manifest?.trimStart().startsWith('#EXTM3U')) continue;
+
+      const lines = manifest.split(/\r?\n/);
+      for (let index = 0; index < lines.length && expanded.length < 16; index += 1) {
+        const marker = lines[index].trim();
+        if (!marker.startsWith('#EXT-X-STREAM-INF:')) continue;
+        const next = lines.slice(index + 1).find(line => line.trim() && !line.trim().startsWith('#'))?.trim();
+        if (!next) continue;
+        const variantUrl = new URL(next, source.url).toString();
+        if (seen.has(variantUrl)) continue;
+        seen.add(variantUrl);
+        expanded.push({
+          url: variantUrl,
+          quality: hlsQuality(marker.slice('#EXT-X-STREAM-INF:'.length)),
+          format: 'HLS',
+          isM3u8: true,
+          referer: source.referer,
+        });
+      }
+    } catch {
+      // The master stream remains usable even when quality discovery is blocked.
+    } finally {
+      clearTimeout(timeout);
+    }
+  }
+
+  return expanded;
+}
+
 export async function parseUrl(url: string): Promise<FetchResult> {
   if (!url || typeof url !== 'string' || !url.trim()) {
     return { success: false, error: 'Enter a valid URL.' };
@@ -116,7 +182,9 @@ export async function parseUrl(url: string): Promise<FetchResult> {
   // Never download a media file just to discover that it is a media file.
   // This also makes signed direct MP4/HLS links resolve immediately.
   if (isDirectVideoUrl(normalizedUrl)) {
-    return { success: true, data: directVideo(normalizedUrl) };
+    const data = directVideo(normalizedUrl);
+    if (data.sources[0].isM3u8) data.sources = await expandHlsVariants(data.sources);
+    return { success: true, data };
   }
 
   let data: VideoInfo | null = null;
@@ -129,6 +197,7 @@ export async function parseUrl(url: string): Promise<FetchResult> {
   if (!data && isFireStreamUrl(normalizedUrl)) data = await attemptParser(() => parseFireStream(normalizedUrl), captureError);
   if (!data && isPlaymateUrl(normalizedUrl)) data = await attemptParser(() => parsePlaymate(normalizedUrl), captureError);
   if (!data && isStreamTapeUrl(normalizedUrl)) data = await attemptParser(() => parseStreamTape(normalizedUrl), captureError);
+  if (!data && isDoodStreamUrl(normalizedUrl)) data = await attemptParser(() => parseDoodStream(normalizedUrl), captureError);
   if (!data) data = await attemptParser(() => parseGeneric(normalizedUrl), captureError);
   if (!data) data = await attemptParser(() => genericFetch(normalizedUrl), captureError);
 
@@ -150,11 +219,13 @@ export async function parseUrl(url: string): Promise<FetchResult> {
         ...source,
         isM3u8,
         format: isM3u8 ? 'HLS' : source.format,
-        referer: source.referer || normalizedUrl,
+        referer: referrerOrigin(source.referer || normalizedUrl),
       };
     });
 
   if (!data.sources.length) return { success: false, error: 'No playable video was found.' };
+
+  data.sources = await expandHlsVariants(data.sources);
 
   data.sources.sort((a, b) => {
     if (a.isM3u8 !== b.isM3u8) return a.isM3u8 ? 1 : -1;
@@ -170,10 +241,9 @@ async function genericFetch(url: string): Promise<VideoInfo | null> {
   const timeout = setTimeout(() => controller.abort(), 10_000);
 
   try {
-    const response = await fetch(url, {
+    const response = await fetchPublicUrl(url, {
       signal: controller.signal,
       headers: { 'User-Agent': 'Mozilla/5.0 (compatible; Fetchly/1.0)' },
-      redirect: 'follow',
     });
     if (!response.ok) return null;
 
