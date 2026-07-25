@@ -106,6 +106,20 @@ export function getHeadersForUrl(upstreamUrl: string): Record<string, string> {
     };
   }
 
+  // FireStream
+  if (
+    lower.includes('firestream.to') ||
+    lower.includes('firestream.co') ||
+    lower.includes('firestre.am') ||
+    lower.includes('firestream')
+  ) {
+    return {
+      ...base,
+      'Referer': 'https://firestream.to/',
+      'Origin': 'https://firestream.to',
+    };
+  }
+
   // MixDrop
   if (
     lower.includes('mxcontent') ||
