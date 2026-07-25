@@ -10,13 +10,7 @@ const FIRESTREAM_DOMAINS = [
   'firestre.am',
 ];
 
-const CORS_PROXIES = [
-  'https://api.allorigins.win/raw?url=',
-  'https://api.codetabs.com/v1/proxy/?quest=',
-];
-
-const FETCH_TIMEOUT = 20000;
-const PROXY_TIMEOUT = 25000;
+const FETCH_TIMEOUT = 12_000;
 
 export function isFireStreamUrl(url: string): boolean {
   try {
@@ -50,45 +44,22 @@ async function fetchWithFallback(url: string): Promise<Response> {
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), FETCH_TIMEOUT);
 
-  const headers = {
-    'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
-    'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8',
-    'Accept-Language': 'en-US,en;q=0.5',
-    'Referer': 'https://firestream.to/',
-    'Origin': 'https://firestream.to',
-    'Cache-Control': 'no-cache',
-    'Pragma': 'no-cache',
-  };
-
   try {
     const response = await fetch(url, {
       signal: controller.signal,
-      headers,
+      headers: {
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36',
+        'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
+        'Accept-Language': 'en-US,en;q=0.8',
+        'Referer': `${new URL(url).origin}/`,
+        'Cache-Control': 'no-cache',
+      },
       redirect: 'follow',
     });
+    if (!response.ok) throw new Error(`Source returned ${response.status}`);
+    return response;
+  } finally {
     clearTimeout(timeout);
-    if (response.ok) return response;
-    throw new Error(`Direct fetch failed: ${response.status}`);
-  } catch (directError) {
-    clearTimeout(timeout);
-    for (const proxy of CORS_PROXIES) {
-      try {
-        const proxyController = new AbortController();
-        const proxyTimeout = setTimeout(() => proxyController.abort(), PROXY_TIMEOUT);
-        const proxyResponse = await fetch(`${proxy}${encodeURIComponent(url)}`, {
-          signal: proxyController.signal,
-          headers: {
-            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
-            'Referer': 'https://firestream.to/',
-          },
-        });
-        clearTimeout(proxyTimeout);
-        if (proxyResponse.ok) return proxyResponse;
-      } catch {
-        continue;
-      }
-    }
-    throw directError;
   }
 }
 
@@ -246,10 +217,9 @@ export async function parseFireStream(url: string): Promise<VideoInfo | null> {
     const html = await response.text();
     if (!html || html.length < 100) throw new Error('Empty response from FireStream');
 
-    if (html.toLowerCase().includes('file not found') || html.toLowerCase().includes('404 not found') || html.toLowerCase().includes('video not found')) {
-      throw new Error('File not found on FireStream');
-    }
-
+    // Do not treat a phrase in a shared page template as conclusive. Some
+    // FireStream pages include a hidden "file not found" message even while
+    // the resolver token and the playable source are present.
     const $ = cheerio.load(html);
     const fileInfo = extractFileInfo($, html, webUrl, fileId);
 

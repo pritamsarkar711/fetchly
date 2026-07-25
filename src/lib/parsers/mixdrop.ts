@@ -24,13 +24,7 @@ const VIDEO_CDN_DOMAINS = [
   'mixdrop',
 ];
 
-const CORS_PROXIES = [
-  'https://api.allorigins.win/raw?url=',
-  'https://api.codetabs.com/v1/proxy/?quest=',
-];
-
-const FETCH_TIMEOUT = 15000;
-const PROXY_TIMEOUT = 20000;
+const FETCH_TIMEOUT = 12_000;
 
 export function isMixDropUrl(url: string): boolean {
   try {
@@ -63,40 +57,18 @@ async function fetchWithFallback(url: string): Promise<Response> {
     const response = await fetch(url, {
       signal: controller.signal,
       headers: {
-        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36',
         'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
-        'Accept-Language': 'en-US,en;q=0.5',
-        'Referer': 'https://mixdrop.co/',
+        'Accept-Language': 'en-US,en;q=0.8',
+        'Referer': `${new URL(url).origin}/`,
         'Cache-Control': 'no-cache',
-        'Pragma': 'no-cache',
       },
       redirect: 'follow',
     });
+    if (!response.ok) throw new Error(`Source returned ${response.status}`);
+    return response;
+  } finally {
     clearTimeout(timeout);
-    if (response.ok) return response;
-    // If not ok, try proxies
-    throw new Error(`Direct fetch failed: ${response.status}`);
-  } catch (directError) {
-    clearTimeout(timeout);
-    for (const proxy of CORS_PROXIES) {
-      try {
-        const proxyController = new AbortController();
-        const proxyTimeout = setTimeout(() => proxyController.abort(), PROXY_TIMEOUT);
-        const proxyResponse = await fetch(`${proxy}${encodeURIComponent(url)}`, {
-          signal: proxyController.signal,
-          headers: {
-            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
-          },
-        });
-        clearTimeout(proxyTimeout);
-        if (proxyResponse.ok) {
-          return proxyResponse;
-        }
-      } catch {
-        continue;
-      }
-    }
-    throw directError;
   }
 }
 

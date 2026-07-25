@@ -1,38 +1,53 @@
-/**
- * Shared utilities for proxying video streams
- */
+/** Shared utilities for the stream and download proxies. */
 
 export const BLOCKED_HOSTS = [
-  'localhost', '127.0.0.1', '0.0.0.0', '::1', '[::1]',
-  '10.', '172.16.', '172.17.', '172.18.', '172.19.',
-  '172.20.', '172.21.', '172.22.', '172.23.', '172.24.',
-  '172.25.', '172.26.', '172.27.', '172.28.', '172.29.',
-  '172.30.', '172.31.', '192.168.',
-  '169.254.',
+  'localhost', '127.', '0.', '::1', '[::1]',
+  '10.', '100.64.', '169.254.', '192.0.0.', '192.0.2.', '192.168.',
+  '198.18.', '198.19.', '203.0.113.',
+  '172.16.', '172.17.', '172.18.', '172.19.', '172.20.', '172.21.',
+  '172.22.', '172.23.', '172.24.', '172.25.', '172.26.', '172.27.',
+  '172.28.', '172.29.', '172.30.', '172.31.',
 ];
 
 export function isInternalUrl(url: string): boolean {
   try {
-    const hostname = new URL(url).hostname.toLowerCase();
-    return BLOCKED_HOSTS.some(blocked =>
-      hostname === blocked || hostname.startsWith(blocked)
-    );
+    const hostname = new URL(url).hostname.toLowerCase().replace(/^\[|\]$/g, '');
+    const privateIpv6 = hostname.includes(':') && /^(?:fc|fd|fe80:)/.test(hostname);
+    return privateIpv6 || BLOCKED_HOSTS.some(blocked => hostname === blocked || hostname.startsWith(blocked));
   } catch {
     return true;
   }
 }
 
-export function validateProxyUrl(input: string | null): string | null {
+export function validateProxyUrl(input: string | null, maxLength = 5000): string | null {
   if (!input || typeof input !== 'string') return null;
   let normalized = input.trim();
-  if (normalized.length > 3000) return null;
-  if (normalized.startsWith('//')) normalized = 'https:' + normalized;
+  if (normalized.length > maxLength) return null;
+  if (normalized.startsWith('//')) normalized = `https:${normalized}`;
+
   try {
     const parsed = new URL(normalized);
     if (!['http:', 'https:'].includes(parsed.protocol)) return null;
-    if (!parsed.hostname.includes('.')) return null;
-    if (isInternalUrl(normalized)) return null;
-    return normalized;
+    if (!parsed.hostname || (!parsed.hostname.includes('.') && parsed.hostname !== 'localhost')) return null;
+    if (parsed.username || parsed.password || isInternalUrl(parsed.toString())) return null;
+    return parsed.toString();
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * A referrer supplied by the parser is only used as a request header.  Reduce
+ * it to an origin so signed media URLs don't leak page paths or query tokens.
+ */
+function pageOrigin(referrer?: string | null): string | null {
+  if (!referrer) return null;
+  const valid = validateProxyUrl(referrer);
+  if (!valid) return null;
+
+  try {
+    const parsed = new URL(valid);
+    return `${parsed.protocol}//${parsed.host}/`;
   } catch {
     return null;
   }
@@ -45,152 +60,63 @@ export function sanitizeFilename(input: string | null, fallback = 'video.mp4'): 
   if (!name.includes('.')) name += '.mp4';
   if (name.length > 150) {
     const ext = name.split('.').pop();
-    name = name.slice(0, 100) + '.' + ext;
+    name = `${name.slice(0, 100)}.${ext}`;
   }
   return name;
 }
 
-export const COMMON_HEADERS = {
-  'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
-  'Accept': '*/*',
-  'Accept-Language': 'en-US,en;q=0.5',
-  'Referer': 'https://mixdrop.co/',
-  'Origin': 'https://mixdrop.co',
-  'Connection': 'keep-alive',
-  'Cache-Control': 'no-cache',
-};
+const USER_AGENT = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36';
 
-export function getHeadersForUrl(upstreamUrl: string): Record<string, string> {
+function inferredReferrer(upstreamUrl: string): string {
   const lower = upstreamUrl.toLowerCase();
-  const base = {
-    'User-Agent': COMMON_HEADERS['User-Agent'],
-    'Accept': '*/*',
-    'Accept-Language': 'en-US,en;q=0.5',
-    'Connection': 'keep-alive',
-    'Cache-Control': 'no-cache',
-  } as Record<string, string>;
 
-  // LuluStream / LuluVdo / tnmr CDN
-  if (
-    lower.includes('luluvdo') ||
-    lower.includes('lulustream') ||
-    lower.includes('luluvid') ||
-    lower.includes('tnmr.org') ||
-    lower.includes('cdn-tnmr') ||
-    lower.includes('732eg54de642sa') ||
-    lower.includes('d00ds.site') ||
-    lower.includes('streamhihi') ||
-    lower.includes('lulu.st') ||
-    lower.includes('cdn1.site')
-  ) {
-    return {
-      ...base,
-      'Referer': 'https://luluvdo.com/',
-      'Origin': 'https://luluvdo.com',
-    };
+  if (lower.includes('tnmr.org') || lower.includes('luluvdo') || lower.includes('lulustream') || lower.includes('luluvid')) {
+    return 'https://luluvdo.com/';
   }
-
-  // Vidara
-  if (
-    lower.includes('vidara.to') ||
-    lower.includes('vidara.so') ||
-    lower.includes('vidara.is') ||
-    lower.includes('vidara.me') ||
-    lower.includes('ey43.com') ||
-    lower.includes('vidar')
-  ) {
-    return {
-      ...base,
-      'Referer': 'https://vidara.to/',
-      'Origin': 'https://vidara.to',
-    };
-  }
-
-  // FireStream
-  if (
-    lower.includes('firestream.to') ||
-    lower.includes('firestream.co') ||
-    lower.includes('firestre.am') ||
-    lower.includes('firestream')
-  ) {
-    return {
-      ...base,
-      'Referer': 'https://firestream.to/',
-      'Origin': 'https://firestream.to',
-    };
-  }
-
-  // Playmate
-  if (
-    lower.includes('playmate.to') ||
-    lower.includes('playmate.is') ||
-    lower.includes('playmate.so') ||
-    lower.includes('playmate')
-  ) {
-    return {
-      ...base,
-      'Referer': 'https://playmate.to/',
-      'Origin': 'https://playmate.to',
-    };
-  }
-
-  // StreamTape
-  if (
-    lower.includes('streamtape.com') ||
-    lower.includes('strtape.cloud') ||
-    lower.includes('streamtape.net') ||
-    lower.includes('streamta.pe') ||
-    lower.includes('streamtape.site') ||
-    lower.includes('strcloud.link') ||
-    lower.includes('shavetape.cash') ||
-    lower.includes('streamtape.to') ||
-    lower.includes('streamtape.xyz') ||
-    lower.includes('tapeblocker.com') ||
-    lower.includes('streamtape') ||
-    lower.includes('stape.fun')
-  ) {
-    return {
-      ...base,
-      'Referer': 'https://streamtape.com/',
-      'Origin': 'https://streamtape.com',
-    };
-  }
-
-  // MixDrop
-  if (
-    lower.includes('mxcontent') ||
-    lower.includes('mxdcontent') ||
-    lower.includes('mixdrop') ||
-    lower.includes('delivery')
-  ) {
-    return {
-      ...base,
-      'Referer': 'https://mixdrop.co/',
-      'Origin': 'https://mixdrop.co',
-    };
-  }
+  if (lower.includes('firestream')) return 'https://firestream.to/';
+  if (lower.includes('playmate')) return 'https://playmate.to/';
+  if (lower.includes('vidara')) return 'https://vidara.to/';
+  if (lower.includes('mxcontent') || lower.includes('mxdcontent') || lower.includes('mixdrop')) return 'https://mixdrop.co/';
+  if (lower.includes('streamtape') || lower.includes('strtape')) return 'https://streamtape.com/';
 
   try {
-    const u = new URL(upstreamUrl);
-    return {
-      ...base,
-      'Referer': `${u.protocol}//${u.host}/`,
-      'Origin': `${u.protocol}//${u.host}`,
-    };
+    const parsed = new URL(upstreamUrl);
+    return `${parsed.protocol}//${parsed.host}/`;
   } catch {
-    return {
-      ...base,
-      'Referer': 'https://mixdrop.co/',
-      'Origin': 'https://mixdrop.co',
-    };
+    return 'https://example.com/';
   }
 }
 
+/**
+ * Hosts frequently reject requests when Origin is forged or when the media CDN
+ * is given its own URL as the referrer.  We send a normal browser-like Referer
+ * only; individual sources pass the page that produced the media URL.
+ */
+export function getHeadersForUrl(upstreamUrl: string, referrer?: string | null): Record<string, string> {
+  return {
+    'User-Agent': USER_AGENT,
+    'Accept': '*/*',
+    'Accept-Language': 'en-US,en;q=0.8',
+    'Referer': pageOrigin(referrer) || inferredReferrer(upstreamUrl),
+    'Cache-Control': 'no-cache',
+  };
+}
+
 export function buildCorsHeaders(): Headers {
-  const h = new Headers();
-  h.set('Access-Control-Allow-Origin', '*');
-  h.set('Access-Control-Allow-Methods', 'GET, HEAD, OPTIONS');
-  h.set('Access-Control-Allow-Headers', 'Range, Content-Type, Origin, Referer, User-Agent, Accept-Language');
-  h.set('Access-Control-Expose-Headers', 'Content-Length, Content-Range, Accept-Ranges, Content-Type, Content-Disposition');
-  return h;
+  const headers = new Headers();
+  headers.set('Access-Control-Allow-Origin', '*');
+  headers.set('Access-Control-Allow-Methods', 'GET, HEAD, OPTIONS');
+  headers.set('Access-Control-Allow-Headers', 'Range, Content-Type, Origin, Referer, User-Agent, Accept-Language');
+  headers.set('Access-Control-Expose-Headers', 'Content-Length, Content-Range, Accept-Ranges, Content-Type, Content-Disposition');
+  return headers;
+}
+
+export function isLikelyHlsUrl(url: string): boolean {
+  try {
+    const parsed = new URL(url);
+    const path = parsed.pathname.toLowerCase();
+    return path.endsWith('.m3u8') || (path.endsWith('.txt') && /\/(?:hls|hls2)\//.test(path));
+  } catch {
+    return /\.m3u8(?:$|[?#])/i.test(url);
+  }
 }
