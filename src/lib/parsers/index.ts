@@ -5,6 +5,7 @@ import { parseVidara, isVidaraUrl } from './vidara';
 import { parseFireStream, isFireStreamUrl } from './firestream';
 import { parsePlaymate, isPlaymateUrl } from './playmate';
 import { parseStreamTape, isStreamTapeUrl } from './streamtape';
+import { parseGeneric } from './generic';
 
 /**
  * Detect which site the URL belongs to and return the appropriate parser
@@ -53,6 +54,12 @@ export async function parseUrl(url: string): Promise<FetchResult> {
       data = await parseStreamTape(normalizedUrl);
     }
 
+    // Generic parser that works for ANY site (mp4, m3u8, webm, etc.)
+    if (!data) {
+      data = await parseGeneric(normalizedUrl);
+    }
+
+    // Last resort: direct video file
     if (!data) {
       data = await genericFetch(normalizedUrl);
     }
@@ -78,6 +85,15 @@ export async function parseUrl(url: string): Promise<FetchResult> {
         error: 'No video sources found. This URL may be invalid or the file has been removed.',
       };
     }
+
+    // Sort: MP4 first for download, but keep master.m3u8 first for HLS
+    data.sources.sort((a, b) => {
+      const aMaster = a.url.includes('master.m3u8');
+      const bMaster = b.url.includes('master.m3u8');
+      if (aMaster && !bMaster) return -1;
+      if (!aMaster && bMaster) return 1;
+      return 0;
+    });
 
     return { success: true, data };
   } catch (error: any) {

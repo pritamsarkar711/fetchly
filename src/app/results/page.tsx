@@ -53,8 +53,31 @@ function ResultsContent() {
           ...data.data,
           sources: data.data.sources.filter(s => {
             const u = s.url.toLowerCase();
-            // Must be direct video: mp4, m3u8, mxdcontent, mxcontent
-            return u.includes('.mp4') || u.includes('.m3u8') || u.includes('mxdcontent') || u.includes('mxcontent') || u.includes('delivery');
+            // Universal filter: allow any video-like URL for any site
+            return (
+              u.includes('.mp4') ||
+              u.includes('.m3u8') ||
+              u.includes('.webm') ||
+              u.includes('.mov') ||
+              u.includes('.avi') ||
+              u.includes('.mkv') ||
+              u.includes('.m4v') ||
+              u.includes('get_video') ||
+              u.includes('mxdcontent') ||
+              u.includes('mxcontent') ||
+              u.includes('delivery') ||
+              u.includes('streamtape') ||
+              u.includes('vidara') ||
+              u.includes('playmate') ||
+              u.includes('firestream') ||
+              u.includes('lulu') ||
+              u.includes('tnmr') ||
+              u.includes('master.m3u8') ||
+              u.includes('.urlset') ||
+              u.includes('hls') ||
+              u.includes('/videos/') ||
+              u.includes('signed')
+            );
           })
         };
         // If filtering removed everything, keep original but it will be handled
